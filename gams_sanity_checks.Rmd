@@ -1,0 +1,1142 @@
+---
+title: "GAM Sanity Checks"
+author: Johannes Björk
+output: html_notebook
+---
+
+Below we provide several sanity checks for the fitted models, mainly focusing on microbiome `PC1` as an exemplar (results were qualitatively similar for other microbiome features). The models fitted here do not include any environmental (i.e. rain and temperature), group-specific (e.g. spatial location and diet) or host-specific (e.g. sex and age) covariates. The results from these sanity checks makes us more confident in the results we report, especially that the increase in deviance explained is not an artifact from data aggregation or increasing model complexity.
+
+### Load packages and data
+
+```{r}
+library(phyloseq)
+library(tidyverse)
+library(gridExtra)
+library(ggridges)
+library(patchwork)
+library(mgcv)
+library(gratia)
+library(knitr)
+library(kableExtra)
+library(broom.mixed)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load phyloseq object
+ps <- readRDS("~/../ps.RDS")
+
+metadata <- as(sample_data(ps), "data.frame") # convert metadata to a data.frame  
+
+metadata <- metadata %>%
+  padr::pad("day") %>%
+  mutate(PC1_AR=arima(PC1, order=c(1,0,0))$residuals,
+         PC2_AR=arima(PC2, order=c(1,0,0))$residuals,
+         PC3_AR=arima(PC3, order=c(1,0,0))$residuals,
+         richness_AR=arima(richness, order=c(1,0,0))$residuals,
+         shannon_AR=arima(shannon, order=c(1,0,0))$residuals,
+         simpson_AR=arima(simpson, order=c(1,0,0))$residuals,
+         grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)),
+         month=factor(months(collection_date, abbreviate=T), levels=c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct")),
+         month_int=as.numeric(month),
+         season=factor(season))
+
+
+metadata_grp <- metadata %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-10-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+
+# This randomizes group labels but all samples from any given host gets the same group assignment
+metadata_grp$grp_randm1 <- metadata_grp$grp_randm2 <- metadata_grp$grp_randm3 <- metadata_grp$grp_randm4 <- metadata_grp$grp_randm5 <- metadata_grp$grp_randm6 <- metadata_grp$grp_randm7 <- metadata_grp$grp_randm8 <- metadata_grp$grp_randm9 <- metadata_grp$grp_randm10 <- NA
+
+for(k in levels(metadata_grp$host)) {
+  sample_from <- c("1.1", "1.21", "1.22", "2.1", "2.2") 
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm1 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm2 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm3 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm4 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm5 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm6 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm7 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm8 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm9 <- sample(x=sample_from, size=1, replace=T)
+  metadata_grp[metadata_grp$host %in% k,]$grp_randm10 <- sample(x=sample_from, size=1, replace=T)
+}
+metadata_grp <- metadata_grp %>%
+            mutate(grp_randm1=factor(grp_randm1), 
+                   grp_randm2=factor(grp_randm2),
+                   grp_randm3=factor(grp_randm3),
+                   grp_randm4=factor(grp_randm4),
+                   grp_randm5=factor(grp_randm5),
+                   grp_randm6=factor(grp_randm6),
+                   grp_randm7=factor(grp_randm7),
+                   grp_randm8=factor(grp_randm8),
+                   grp_randm9=factor(grp_randm9),
+                   grp_randm10=factor(grp_randm10))
+
+select_host <- c("Baboon_498","Baboon_103","Baboon_494","Baboon_503","Baboon_4","Baboon_390","Baboon_113","Baboon_283","Baboon_395","Baboon_382","Baboon_481","Baboon_107","Baboon_78")
+
+metadata_host <- metadata_grp %>%
+  filter(host %in% select_host) %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         sex=factor(sex),
+         time=as.integer(factor(collection_date)))
+```
+
+### Minimizing residual autocorrelation
+
+Time series are typically plagued with residual autocorrelation which means that the residuals are not independent. This is a problem for most statistical analyses, GAMs included. While there are built-in approaches in the `R` package `mgcv` to handle autocorrelation, these techniques are harder to implement for **(i)** irregularly spaced time series; **(ii)** time series with multiple data at each time point; and **(iii)** large data sets with thousands of observations.
+
+To minimize residual autocorrelation, we **(1)** made our total time series continuous by ‘filling in’ missing dates (i.e. days) with NAs; and **(2)** fitted a first-order autoregressive, AR(1), process using the `arima(...,order=c(1,0,0))` function in `R’s` base `stats` package for each response variable. We then used the residuals of this process as the response variable in all our GAMs. Because an AR(1) process regresses the value of `Y` at time `t` on the value of `Y` at time `t-1`, the residuals of this process are therefore free of autocorrelation between immediately successive data points. 
+
+We note, however, that it would preferable to remove autocorrelation from each individual host’s time series, before combining them, but due to the above mentioned difficulties, we corrected for autocorrelation at the population level. Before doing so, however, we first analyzed the autocorrelation structure in the dataset focusing on microbiome `PC1` to determine whether there are differences between individual hosts from different social groups, or whether there are differences in autocorrelation structure at the group versus the host level. If there are large differences, this could contribute to the different patterns we observe at each level in our hierarchal GAM analysis (e.g. deviance explained).
+
+To do so, we first have to find the host that have a decent number of samples within say a 12-month period. Below, we use a sliding window approach to move through the time series, one day at a time, counting the number of samples for each host within each 365-day window.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Sliding window to find well-sampled hosts in 12m intervals
+
+# step: step size 1 day
+# window: window size 365 days
+# N: minimum number of samples per hosts 
+slideShow <- function(window, step, N){
+  
+  mdat_pad <- padr::pad(metadata_grp, interval="1 day", by="collection_date") %>% 
+    mutate(time=as.integer(factor(collection_date)), grp=as.character(grp), host=as.character(host)) %>%
+    select("sample_id", "collection_date", "month", "hydro_year", "host", "grp")
+  
+  dates <- unique(mdat_pad$collection_date)
+  total <- length(dates)
+  bins <- seq(from=1, to = (total - window), by=step)
+  windows <- vector("list")
+  for (i in 1:length(bins)) {
+    windows[[i]] <- dates[bins[i]:(bins[i] + window - 1)]
+  }
+  
+  mdat_window <- vector("list",length(windows))
+  mdat_window_count <- vector("list",length(windows))
+  for(j in 1:length(windows)){
+    mdat_window[[j]] <- mdat_pad[mdat_pad$collection_date %in% windows[[j]],]
+    mdat_window[[j]]$window <- j
+    
+    mdat_window_count[[j]] <- mdat_window[[j]] %>% 
+      group_by(host, grp) %>%
+      distinct(collection_date, .keep_all=T) %>% # this avoids counting duplicated samples (i.e. if multiple samples exist for a host and collection_date)
+      count() %>% 
+      drop_na()
+    
+    mdat_window_count[[j]]$start <- min(windows[[j]])
+    mdat_window_count[[j]]$end <- max(windows[[j]])
+    
+    mdat_window_count[[j]] <- mdat_window_count[[j]] %>%
+      filter(n>=N)
+  }
+  out <- purrr::discard(mdat_window_count, ~nrow(.) == 0)
+  return(out)
+}
+```
+
+Running the above sliding window function with different values of `N`, I found that `N=20` resulted in 59 hosts from the 5 main groups. Beyond that, we are losing group coverage.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+selected_12m_periods <- slideShow(window=365, step=1, N=20)
+selected_12m_periods <- do.call(rbind, selected_12m_periods)
+selected_12m_periods$host %>% unique() %>% length()
+selected_12m_periods$grp %>% unique() %>% length()
+selected_12m_periods %>% head(n=1)
+```
+
+The data.frame `selected_12m_periods` contains 5 columns: `host`, `grp`, `n`, `start` and `end`. Each row represents a window with the `start` and `end` representing the start and end date of that focal window. For example, the first row tells us that **Baboon_378** from group **1.21** have *20 samples* in a window which started **2001-02-12** and ended **2002-02-11**. However, as we used a sliding window with a step size of 1, there are a lot of overlapping windows. So the next step is to take one of the windows for each host with the largest `n`. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+top_n_windows <- selected_12m_periods %>% 
+  group_by(host) %>% 
+  filter(n==max(n)) %>%
+  top_n(n=1) %>%
+  ungroup()
+
+top_n_windows %>% nrow()
+top_n_windows %>% head(n=1)
+```
+
+Here we can see that, as exepected, the new data.frame `top_n_windows` contains 59 rows, one for each host. We also see that the window for **Baboon_378** that had the largest `n` (**28 samples**) started **2001-06-09** and ended **2002-06-08**.
+
+For each host, we extract the `n` values of microbiome `PC1` for each window's `start` and `end` date. We make sure each window is filled in or padded to contain 365 days irregardless of `n`. We can then apply the `acf()` function to compute estimates of autocorrelation between samples for each host. The padding step is important as the `acf()` function expects a regularly spaced time series.  
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+acf_df <- data.frame(matrix(ncol=length(top_n_windows$host), nrow=365))
+colnames(acf_df) <- top_n_windows$host
+acf_df$lag <- 0:364
+
+for(i in top_n_windows$host){
+  #print(i)
+  host_i <- top_n_windows %>% 
+    filter(host==i)
+  
+  host_i_top_n_window <- metadata_grp %>%
+    mutate(host=as.character(host), grp=as.character(grp)) %>%
+    filter(host==host_i$host, collection_date>=host_i$start & collection_date<=host_i$end) %>%
+    padr::pad(by="collection_date", interval="day", start_val=as.Date(host_i$start), end_val=as.Date(host_i$end))
+  
+  acf_df[,host_i$host] <- acf(host_i_top_n_window$PC1, na.action=na.pass, lag.max=364, plot=FALSE)$acf
+}
+
+# Prepare data.frame for plotting
+acf_df_gather <- gather(acf_df, key=host, value=acf, -lag) %>% right_join(select(metadata_grp, host, grp), by="host") %>% 
+  mutate(grp=as.character(grp))
+```
+
+We compute quantiles, both for each group seperately, and for all hosts jointly. We then plot two plots: first the estimated autocorrelation against the daily lags, and then the autocorrelation values as density plots. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+all_grps_quantiles <- acf_df_gather %>%
+  group_by(lag, grp) %>%
+  dplyr::summarise(p2.5 = quantile(acf, prob=0.025, na.rm = TRUE),
+            p5 = quantile(acf, prob=0.05, na.rm = TRUE),
+            p10 = quantile(acf, prob=0.1, na.rm = TRUE),
+            p25 = quantile(acf, prob=0.25, na.rm = TRUE),
+            p50 = quantile(acf, prob=0.5, na.rm = TRUE),
+            mean = mean(acf, na.rm = TRUE),
+            p75 = quantile(acf, prob=0.75, na.rm = TRUE),
+            p90 = quantile(acf, prob=0.9, na.rm = TRUE),
+            p95 = quantile(acf, prob=0.95, na.rm = TRUE),
+            p97.5 = quantile(acf, prob=0.975, na.rm = TRUE)) %>%
+  ungroup()
+
+all_host_quantiles <- acf_df_gather %>%
+  group_by(lag) %>%
+  dplyr::summarise(p2.5 = quantile(acf, prob=0.025, na.rm = TRUE),
+            p5 = quantile(acf, prob=0.05, na.rm = TRUE),
+            p10 = quantile(acf, prob=0.1, na.rm = TRUE),
+            p25 = quantile(acf, prob=0.25, na.rm = TRUE),
+            p50 = quantile(acf, prob=0.5, na.rm = TRUE),
+            mean = mean(acf, na.rm = TRUE),
+            p75 = quantile(acf, prob=0.75, na.rm = TRUE),
+            p90 = quantile(acf, prob=0.9, na.rm = TRUE),
+            p95 = quantile(acf, prob=0.95, na.rm = TRUE),
+            p97.5 = quantile(acf, prob=0.975, na.rm = TRUE)) %>%
+  ungroup()
+
+acf_df_gather$grp <- factor(acf_df_gather$grp, levels=c("1.1","1.21","1.22","2.1","2.2"), labels=c("Nyayo's","Omo's","Viola's","Linda's","Wearver's"))
+
+group_colors <- c("red", "orange", "blue", "violet", "green")
+plots <- list()
+unique_groups <- unique(all_grps_quantiles$grp)
+unique_groups <- unique_groups[!is.na(unique_groups)] 
+unique_groups <- setNames(unique_groups,c("Nyayo's","Omo's","Viola's","Linda's","Wearver's"))
+for(g in 1:length(unique_groups)) {
+  # colors by hand, kind of messy
+  plots[[g]] <- ggplot(all_grps_quantiles[all_grps_quantiles$grp == unique_groups[g],]) +
+    geom_ribbon(aes(x=lag, ymin=p5, ymax=p95), fill=group_colors[g], alpha=0.5) +
+    geom_ribbon(aes(x=lag, ymin=p25, ymax=p75), fill=group_colors[g], alpha=0.9) +
+    geom_line(aes(x=lag, y=mean), color=paste0("dark",group_colors[g])) +
+    ylim(c(-0.25, 1.0)) +
+    ylab("Autocorrelation (PC1)") +
+    ggtitle(names(unique_groups[g]))
+}
+
+# manually render the AC plot for all hosts
+host_plot <- ggplot(all_host_quantiles) +
+  geom_ribbon(aes(x=lag, ymin=p5, ymax=p95), fill="gray", alpha=0.5) +
+  geom_ribbon(aes(x=lag, ymin=p25, ymax=p75), fill="gray", alpha=0.9) +
+  geom_line(aes(x=lag, y=mean), color="darkgray") +
+  ylim(c(-0.25, 1.0)) +
+  ylab("Autocorrelation (PC1)") +
+  ggtitle("All hosts")
+
+grid.arrange(plots[[1]]+xlim(c(0,150))+theme_bw(), plots[[2]]+xlim(c(0,150))+theme_bw(), plots[[3]]+xlim(c(0,150))+theme_bw(),
+plots[[4]]+xlim(c(0,150))+theme_bw(), plots[[5]]+xlim(c(0,150))+theme_bw(), host_plot+xlim(c(0,150))+theme_bw(), nrow = 2)
+
+# Density plots using geom_density_ridges 
+acf_df_gather$overall <- "All hosts"
+
+acf_df_gather %>% na.omit() %>% ggplot(aes(x=acf)) + 
+  geom_density_ridges(aes(y=overall,scale=0.02), color=NA) +
+  geom_density_ridges(aes(y=grp, fill=grp), color=NA) +
+  scale_fill_manual(values=c("#e41a1c","#f28106","#4745af","#e541c6","#31725b","gray")) +
+  scale_y_discrete(limits=c("Nyayo's","Omo's","Viola's","Linda's","Wearver's","All hosts")) +
+  xlim(c(-0.1, 0.1)) + guides(fill=F) + ylab(NULL) + xlab("Autocorrelation (PC1)")
+```
+
+From these plots, we can see that there are no noticeable differences between individual hosts from different social groups, or in the autocorrelation structure at the group versus the host level. This gives us more confidence in that we can correct for autocorrelation at the population level. 
+  
+Below, we fit the models to microbiome `PC1` without correcting and correcting for autocorrelation at the population level, and compare the autocorrelation that is left in the residuals of these models.    
+
+```{r eval=T, echo=T, message=FALSE, warning=FALSE}
+# Model 1-3 -- PC1 (without correcting for autocorrelation)
+m1a <- bam(PC1~s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=8), 
+           select=T, data=metadata)
+
+m2a <- bam(PC1~s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           select=T, data=metadata_grp)
+
+m3a <- bam(PC1~s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=2) +
+             s(time, host, k=30, bs="fs", m=1), 
+           select=T, data=metadata_host)
+
+# Model 1-3 -- PC1_AR (correcting for autocorrelation)
+m1b <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=8), 
+           select=T, data=metadata)
+
+m2b <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           select=T, data=metadata_grp)
+
+m3b <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=2)+
+             s(time, host, k=30, bs="fs", m=1), 
+           select=T, data=metadata_host)
+```
+
+Below we add the `collection_date` to the residuals from each fitted model. To apply the `acf()` function to each model, we also have to fill in or pad each combined data.frame. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Padd all time series 
+metadata_m1a <- metadata %>% 
+  drop_na(PC1) %>% 
+  select(collection_date) %>% 
+  bind_cols(m1a_res=residuals(m1a)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+metadata_grp_m1a <- metadata_grp %>% 
+  select(collection_date) %>% 
+  bind_cols(m2a_res=residuals(m2a)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+metadata_host_m1a <- metadata_host %>% 
+  select(collection_date) %>% 
+  bind_cols(m3a_res=residuals(m3a)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+m1a_acf <- acf(metadata_m1a$m1a_res, na.action=na.pass, lag.max=365, plot=FALSE)
+m2a_acf <- acf(metadata_grp_m1a$m2a_res, na.action=na.pass, lag.max=365, plot=FALSE)
+m3a_acf <- acf(metadata_host_m1a$m3a_res, na.action=na.pass, lag.max=365, plot=FALSE)
+
+# Autocorrelation corrected
+metadata_m1b <- metadata %>% 
+  drop_na(PC1_AR) %>% 
+  select(collection_date) %>% 
+  bind_cols(m1b_res=residuals(m1b)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+metadata_grp_m1b <- metadata_grp %>% 
+  select(collection_date) %>% 
+  bind_cols(m2b_res=residuals(m2b)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+metadata_host_m1b <- metadata_host %>% 
+  select(collection_date) %>% 
+  bind_cols(m3b_res=residuals(m3b)) %>%
+  arrange(collection_date) %>% 
+          padr::pad() %>% 
+          mutate(time=as.integer(as.factor(collection_date)))
+
+m1b_acf <- acf(metadata_m1b$m1b_res, na.action=na.pass, lag.max=365, plot=FALSE)
+m2b_acf <- acf(metadata_grp_m1b$m2b_res, na.action=na.pass, lag.max=365, plot=FALSE)
+m3b_acf <- acf(metadata_host_m1b$m3b_res, na.action=na.pass, lag.max=365, plot=FALSE)
+```
+
+```{r, echo=F, eval=T, message=FALSE, warning=FALSE}
+par(mfrow=c(2,3), oma=c(0,0,0,0), mar=c(5,3,5,2))
+plot(m1a_acf, xlab=NA, ylab=NA, main="eq. 1 (P)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+
+plot(m2a_acf, xlab=NA, ylab=NA, main="eq. 2 (P+G)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+
+plot(m3a_acf, xlab=NA, ylab=NA, main="eq. 3 (P+G+H)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+
+plot(m1b_acf, xlab=NA, ylab=NA, main="eq. 1 (P)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+
+plot(m2b_acf, xlab=NA, ylab=NA, main="eq. 2 (P+G)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+
+plot(m3b_acf, xlab=NA, ylab=NA, main="eq. 3 (P+G+H)", xaxt="n", yaxt="n", ylim=c(-1,1))
+axis(1, seq(1, 365, 91), mgp=c(3,.5,0)) #x-axis
+mtext(1, text="Lag (days)", line=1.5, cex=0.8)
+axis(2, seq(-1, 1, 0.2), mgp=c(3,.5,0), las=1) #y-axis
+mtext(2, text="Residual autocorrelation", line=1.8, cex=0.8)
+```
+
+As we see here, there is indeed autocorrelation in the residuals of all models using microbiome `PC1`. However, using the residuals from an AR(1) process substantially reduces autocorrelation in the residuals.
+
+### Model diagnostics for AR(1) models
+
+For model diagnostics, we again focus on two diagnostic plots: **(1)** QQ-plot of residuals, and **(2)** deviance residuals vs. fitted values, along with the output from `mgcv`’s `k.check()` function which tests whether the basis dimension for each smooth in the focal model is adequate. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+set.seed(1)
+
+## Model 1
+
+# QQ-plot
+qq_m1b <- qq_plot(m1b, method="simulate") + labs(title=NULL, subtitle=NULL) + theme(panel.background=element_blank(), panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+df_m1b <- data.frame(fitted=fitted(m1b), residuals=resid(m1b, type="deviance"))
+
+# fitted versus deviance plot
+dev_vs_fit_m1b <- ggplot(df_m1b, aes(x=fitted, y=residuals)) + geom_point() + labs(x="Linear predictor", y="Deviance residual") + theme(panel.background=element_blank(),panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+
+## Model 2
+
+# QQ-plot
+qq_m2b <- qq_plot(m2b, method="simulate") + labs(title=NULL, subtitle=NULL) + theme(panel.background=element_blank(), panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+df_m2b <- data.frame(fitted=fitted(m2b), residuals=resid(m2b, type="deviance"))
+
+# fitted versus deviance plot
+dev_vs_fit_m2b <- ggplot(df_m2b, aes(x=fitted, y=residuals)) + geom_point() + labs(x="Linear predictor", y="Deviance residual") + theme(panel.background=element_blank(),panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+
+## Model 3
+
+# QQ-plots
+qq_m3b <- qq_plot(m3b, method="simulate") + labs(title=NULL, subtitle=NULL) + theme(panel.background=element_blank(), panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+df_m3b <- data.frame(fitted=fitted(m3b), residuals=resid(m3b, type="deviance"))
+
+# fitted versus deviance plot
+dev_vs_fit_m3b <- ggplot(df_m3b, aes(x=fitted, y=residuals)) + geom_point() + labs(x="Linear predictor", y="Deviance residual") + theme(panel.background=element_blank(),panel.grid.major=element_blank(), panel.grid.minor=element_blank())
+
+plot_grid(qq_m1b, 
+          dev_vs_fit_m1b,
+          
+          qq_m2b, 
+          dev_vs_fit_m2b,
+          
+          qq_m3b, 
+          dev_vs_fit_m3b, 
+          
+          ncol=2, nrow=3, align="hv", axis="lrtb",labels=letters[1:6])
+
+k.check(m1b) %>% broom.mixed::tidy(effect = 'fixed') %>% select(".rownames", "k.", "edf", "k.index", "p.value") %>% kable(digits=2, format='html', booktabs=T, col.names=c("Smooth term", "k'", "EDF", "k-index", "p-value")) %>% kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position")) %>% add_footnote("Model 1 (eq. 1)", escape=FALSE, notation="none")
+
+k.check(m2b) %>% broom.mixed::tidy(effect = 'fixed') %>% select(".rownames", "k.", "edf", "k.index", "p.value") %>% kable(digits=2, format='html', booktabs=T, col.names=c("Smooth term", "k'", "EDF", "k-index", "p-value")) %>% kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position")) %>% add_footnote("Model 2 (eq. 2)", escape=FALSE, notation="none")
+
+k.check(m3b) %>% broom.mixed::tidy(effect = 'fixed') %>% select(".rownames", "k.", "edf", "k.index", "p.value") %>% kable(digits=2, format='html', booktabs=T, col.names=c("Smooth term", "k'", "EDF", "k-index", "p-value")) %>% kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position")) %>% add_footnote("Model 3 (eq. 3)", escape=FALSE, notation="none")
+```
+
+These plots indicate good fit of the autocorrelation corrected models. 
+
+## Population level processes
+
+Below we evaluate two different ways to model processes at the population level. Two possible ways to do this is by either $\mathtt{y_i \sim s(time_i)}$, or as we are doing it, which is by decomposing $\mathtt{s(time_i)}$ into its intra and inter-annual components: $\mathtt{y_i \sim s(month_i)+s(hydrological \ year_i)}$. 
+
+We fit these slightly different versions of Model 1, while also investigating how this choice affects the fit of Model 2. We fit all three versions of Model 1 to all data, and the two versions of Model 2 to the subset of data containing the 5 main social groups (i.e. without their fission products).
+
+Here we evaluate model fit by computing deviance and AIC. Deviance is a measure of goodness-of-fit for nonlinear models. It quantifies the discrepancy between the observations and the fitted values, and is identical to the unadjusted $R^2$ for linear models. AIC is a relative measure of model parsimony where more complex models are penalized more heavily. It provides an approximation of predictive accuracy as measured by out-of-sample deviance. Deviance explained is analogous to variance explained for linear models. 
+
+Here we can only compare deviance and AIC among models fitted to the same data set (this does not include deviance explained). Furthermore, to be sure that deviance and AIC are computed correctly, we followed the package authors’ recommendations to change `select=TRUE` to `select=FALSE`, as well as change the inference method from `“REML”` (or `“fREML”`) to `”ML”`.    
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+
+# For AIC, select=T has to be FALSE
+# Change method="fREML" to "ML" as the former is not a true likelihood 
+
+# Three versions of Model 1
+m1_1 <- bam(PC1_AR~
+             s(time, k=65), 
+           data=metadata, select=F, method="ML")
+
+m1_2 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6), 
+           data=metadata, select=F, method="ML")
+
+m1_3 <- bam(PC1_AR~
+             s(time, k=65) +
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6), 
+           data=metadata, select=F, method="ML")
+
+m1_4 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, season, bs="fs", k=6), 
+           data=metadata, select=F, method="ML")
+
+m1_5 <- bam(PC1_AR~
+             s(time, k=65) +
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, season, bs="fs"), 
+           data=metadata, select=F, method="ML")
+
+# Two versions of Model 2
+m2_1 <- bam(PC1_AR~
+             s(time, k=65, m=2) +
+             s(time, grp, k=50, bs="fs", m=2), 
+           data=metadata_grp, select=F, method="ML")
+
+m2_2 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           data=metadata_grp, select=F, method="ML")
+
+m2_3 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, season, bs="fs", k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           data=metadata_grp, select=F, method="ML")
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+set.seed(2)
+
+pop_lvl_proc <- cbind(data.frame(Model=
+                         c("m1_1",
+                           "m1_2",
+                           "m1_3",
+                           "m1_4",
+                           "m1_5",
+                           "m2_1",
+                           "m2_2",
+                           "m2_3")),
+                  data.frame(Deviance=
+                               c(
+                                 m1_1$deviance,
+                                 m1_2$deviance,
+                                 m1_3$deviance,
+                                 m1_4$deviance,
+                                 m1_5$deviance,
+                                 m2_1$deviance,
+                                 m2_2$deviance,
+                                 m2_3$deviance)),
+                  data.frame(AIC=
+                               c(
+                                 AIC(m1_1),
+                                 AIC(m1_2),
+                                 AIC(m1_3),
+                                 AIC(m1_4),
+                                 AIC(m1_5),
+                                 AIC(m2_1),
+                                 AIC(m2_2),
+                                 AIC(m2_3))),
+                  data.frame(`Deviance explained`=
+                               c(
+                                 round((summary(m1_1)$dev.expl*100),3),
+                                 round((summary(m1_2)$dev.expl*100),3),
+                                 round((summary(m1_3)$dev.expl*100),3),
+                                 round((summary(m1_4)$dev.expl*100),3),
+                                 round((summary(m1_5)$dev.expl*100),3),
+                                 round((summary(m2_1)$dev.expl*100),3),
+                                 round((summary(m2_2)$dev.expl*100),3),
+                                 round((summary(m2_3)$dev.expl*100),3))))
+
+colnames(pop_lvl_proc)[4] <- "Deviance explained"
+
+pop_lvl_proc %>% 
+  kable(digits=2, format='html', align="c", booktabs=T) %>% 
+  kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position")) %>% 
+  row_spec(which(as.character(pop_lvl_proc$Model) %in% c("m1_2","m2_2")), bold = T, color="black") 
+```
+
+As the table shows, the population level models including $\mathtt{s(time)$ (i.e. m1_1, m1_3, m1_5) have a better fit (as indicated by lower deviance and AIC values) and explain slightly more deviance than those that do not. This indicates that there is more in the data to explain than intra- and inter-annual variation. However, adding $\mathtt{s(time)$ on top of the intra- and inter-annual terms (i.e. m1_3 vs versus m1_a) does little to improve model fit. Similarly, accounting for variation between seasons does little to improve model fit (i.e. m1_2 vs m1_4).
+
+Accounting for differences between social groups (m2_1 vs m1_1) almost doubles the deviance explained. While all models that add group-level processes explain close to the same amount of deviance (m2_1, m2_2 and m2_3), m2_2 has a slight better fit. The increase in deviance explained from m2_1 to m2_2 shows that modeling population-level processes by decomposing them into $\mathtt{s(month_i)+s(hydrological \ year_i)}$ rather than modeling them as $\mathtt{s(time)$ captures more of the seasonal variation in the data.
+
+## Deviance explained across models
+
+In many settings, increasing the complexity of a model also increases variance or deviance explained, even if additional model parameters do not improve fit. To ensure that this trivial explanation does not account for our observation that multilevel models explain more deviance than single level models (e.g., **P+G** versus **P**), we performed the following analyses (always fitting the same dataset across models):
+
+### Random assignment of hosts to social groups 
+We first randomly assigned each host to a different social group, and re-fitted models 1 (m1_3 above) and 2 to this randomized data. Model 1 should not be affected, as social group information is not used in the model. However, in the randomized data, Model 2 should explain little additional deviance beyond that explained by Model 1, in contrast to the true data in which host-social group assignments are correct. 
+
+This prediction was upheld across 10 independent randomizations. Specifically, although in all cases the Model 2 fit on the randomized data explained more deviance than the Model 1 alone (mean=10.87 ± 0.28 vs. 9.6), in no case did it explain as much additional deviance as the Model 2 fit on the true data: on average, the additional deviance explained in the true data was 1.67 fold larger than for randomized data.
+
+```{r eval=T, echo=T, message=FALSE, warning=FALSE}
+set.seed(3)
+
+m1_pc1_baseline <- bam(PC1_AR~
+                     s(time, k=65) +
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_baseline <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+## 10 randomizations
+m2_pc1_randm1 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm1, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm2 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm2, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm3 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm3, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm4 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm4, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm5 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm5, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm6 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm6, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm7 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm7, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm8 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm8, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm9 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm9, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+m2_pc1_randm10 <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp_randm10, k=50, bs="fs", m=1), 
+                   data=metadata_grp, select=T)
+
+df_dev_expl <- reshape2::melt(cbind(
+                     data.frame(m1_baseline=summary(m1_pc1_baseline)$dev.expl*100),
+                     data.frame(m2_baseline=summary(m2_pc1_baseline)$dev.expl*100),
+                     data.frame(m2_randm1=summary(m2_pc1_randm1)$dev.expl*100),
+                     data.frame(m2_randm2=summary(m2_pc1_randm2)$dev.expl*100),
+                     data.frame(m2_randm3=summary(m2_pc1_randm3)$dev.expl*100),
+                     data.frame(m2_randm4=summary(m2_pc1_randm4)$dev.expl*100),
+                     data.frame(m2_randm5=summary(m2_pc1_randm5)$dev.expl*100),
+                     data.frame(m2_randm6=summary(m2_pc1_randm6)$dev.expl*100),
+                     data.frame(m2_randm7=summary(m2_pc1_randm7)$dev.expl*100),
+                     data.frame(m2_randm8=summary(m2_pc1_randm8)$dev.expl*100),
+                     data.frame(m2_randm9=summary(m2_pc1_randm9)$dev.expl*100),
+                     data.frame(m2_randm10=summary(m2_pc1_randm10)$dev.expl*100)
+                     ))
+
+# Mean + std of randomizations
+df_dev_expl$value[3:12] %>% mean()
+df_dev_expl$value[3:12] %>% sd()
+
+# Fold change/increase from average % deviance explained across randomization to baseline 
+2^log2(summary(m2_pc1_baseline)$dev.expl/(mean(df_dev_expl$value[3:12])/100)) 
+```
+
+```{r eval=T, echo=T, message=FALSE, warning=FALSE}
+df_dev_expl$colgrp <- c("#f7f5bf","#d1e9d1", rep("lightgray",10))
+colgrp <- setNames(df_dev_expl$colgrp,df_dev_expl$variable)
+
+df_dev_expl %>% 
+  ggplot(aes(x=variable, y=value, fill=variable)) + 
+  geom_bar(stat="identity") +
+  scale_y_continuous(breaks=seq(0, 20, 2),limits=c(0, 20)) +
+  labs(y="Deviance explained", x=NULL) +
+  theme(panel.background=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(size=0.2),
+        axis.text.x=element_blank(),
+        axis.line = element_line(size=0.2)) +
+  scale_fill_manual(values=colgrp) + guides(fill=guide_legend(NULL))
+```
+
+From this plot, we can see that the 10 randomizations does not explain as much deviance as Model 2 fitted on our actual data, telling us that the observed increase in deviance explained is not expected solely by chance. Also reassuringly, the deviance explained by these randomizations is closer to the deviance explained by model m1_1.
+
+## Effect of data aggregation 
+
+As we fit differently sized data sets to our three models, we also need to evaluate the effect of data aggregation on deviance explained. Below we fit our three models to the same dataset, i.e. to the smallest subset containing samples from the 13 best-sampled hosts. The goal here is to see whether we see a similar increase in deviance explained as we do when we fit the three models to the differently sized data sets.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# PC1
+m1_pc1_small <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6), 
+                   data=metadata_host, select=T)
+
+m2_pc1_small <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp, k=50, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+m3_pc1_small <- bam(PC1_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) + 
+                     s(time, grp, k=50, bs="fs", m=2) + 
+                     s(time, host, k=30, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+# PC2
+m1_pc2_small <- bam(PC2_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6), 
+                   data=metadata_host, select=T)
+
+m2_pc2_small <- bam(PC2_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp, k=50, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+m3_pc2_small <- bam(PC2_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) + 
+                     s(time, grp, k=50, bs="fs", m=2) + 
+                     s(time, host, k=30, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+# PC3
+m1_pc3_small <- bam(PC3_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6), 
+                   data=metadata_host, select=T)
+
+m2_pc3_small <- bam(PC3_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) +
+                     s(time, grp, k=50, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+m3_pc3_small <- bam(PC3_AR~
+                     s(month_int, k=7, bs="cc") + 
+                     s(hydro_year, k=6, m=2) + 
+                     s(time, grp, k=50, bs="fs", m=2) + 
+                     s(time, host, k=30, bs="fs", m=1), 
+                   data=metadata_host, select=T)
+
+# We want to compare the above models to the original ones
+
+m1_pc1 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=8), 
+           select=T, data=metadata)
+
+m2_pc1 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           select=T, data=metadata_grp)
+
+m3_pc1 <- bam(PC1_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=2)+
+             s(time, host, k=30, bs="fs", m=1), 
+           select=T, data=metadata_host)
+
+m1_pc2 <- bam(PC2_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=8), 
+           select=T, data=metadata)
+
+m2_pc2 <- bam(PC2_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           select=T, data=metadata_grp)
+
+m3_pc2 <- bam(PC2_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=2)+
+             s(time, host, k=30, bs="fs", m=1), 
+           select=T, data=metadata_host)
+
+m1_pc3 <- bam(PC3_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=8), 
+           select=T, data=metadata)
+
+m2_pc3 <- bam(PC3_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=1), 
+           select=T, data=metadata_grp)
+
+m3_pc3 <- bam(PC3_AR~
+             s(month_int, k=7, bs="cc") +
+             s(hydro_year, k=6, m=2) +
+             s(time, grp, k=50, bs="fs", m=2)+
+             s(time, host, k=30, bs="fs", m=1), 
+           select=T, data=metadata_host)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+set.seed(4)
+
+df_pc1_small <- cbind(data.frame(Model=c("m1","m2","m3")),
+                  data.frame(`Deviance explained`=c(
+                                        round((summary(m1_pc1_small)$dev.expl*100),3),
+                                        round((summary(m2_pc1_small)$dev.expl*100),3),
+                                        round((summary(m3_pc1_small)$dev.expl*100),3))),
+                  data.frame(`Deviance explained original`=c(
+                                        round((summary(m1_pc1)$dev.expl*100),3),
+                                        round((summary(m2_pc1)$dev.expl*100),3),
+                                        round((summary(m3_pc1)$dev.expl*100),3))))
+
+colnames(df_pc1_small)[2:3] <- c("Deviance explained","Deviance explained original")
+df_pc1_small$PC <- "PC1"
+
+df_pc2_small <- cbind(data.frame(Model=c("m1","m2","m3")),
+                  data.frame(`Deviance explained`=c(
+                                        round((summary(m1_pc2_small)$dev.expl*100),3),
+                                        round((summary(m2_pc2_small)$dev.expl*100),3),
+                                        round((summary(m3_pc2_small)$dev.expl*100),3))),
+                 data.frame(`Deviance explained original`=c(
+                                        round((summary(m1_pc2)$dev.expl*100),3),
+                                        round((summary(m2_pc2)$dev.expl*100),3),
+                                        round((summary(m3_pc2)$dev.expl*100),3))))
+
+colnames(df_pc2_small)[2:3] <- c("Deviance explained","Deviance explained original")
+df_pc2_small$PC <- "PC2"
+
+df_pc3_small <- cbind(data.frame(Model=c("m1","m2","m3")),
+                  data.frame(`Deviance explained`=c(
+                                        round((summary(m1_pc3_small)$dev.expl*100),3),
+                                        round((summary(m2_pc3_small)$dev.expl*100),3),
+                                        round((summary(m3_pc3_small)$dev.expl*100),3))),
+                 data.frame(`Deviance explained original`=c(
+                                        round((summary(m1_pc3)$dev.expl*100),3),
+                                        round((summary(m2_pc3)$dev.expl*100),3),
+                                        round((summary(m3_pc3)$dev.expl*100),3))))
+
+colnames(df_pc3_small)[2:3] <- c("Deviance explained","Deviance explained original")
+df_pc3_small$PC <- "PC3"
+
+df_all_small <- rbind(df_pc1_small, df_pc2_small, df_pc3_small)
+df_all_small.m <- reshape2::melt(df_all_small)
+df_all_small.m$PC <- factor(df_all_small.m$PC)
+df_all_small.m$variable <- factor(df_all_small.m$variable, levels=c("Deviance explained original","Deviance explained"))
+
+p_orig <- df_all_small.m %>% filter(variable=="Deviance explained original") %>% ggplot(aes(x=Model, y=value, fill=PC)) + geom_bar(stat="identity", position="dodge", width=0.5) + 
+  theme(panel.background=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(size=0.2),
+        axis.line = element_line(size=0.2)) + guides(fill=FALSE) + 
+  scale_y_continuous(breaks = seq(0, 70, by = 10)) + 
+  ylab("Deviance explained") +
+  scale_fill_manual(values=c("#5ab4ac","#b7b7b7","#d8b365"))
+
+p_small <- df_all_small.m %>% filter(variable=="Deviance explained") %>% ggplot(aes(x=Model, y=value, fill=PC)) + geom_bar(stat="identity", position="dodge", width=0.5) + 
+  theme(panel.background=element_blank(), 
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_line(size=0.2),
+        axis.line = element_line(size=0.2)) + guides(fill=FALSE) + 
+  scale_y_continuous(breaks = seq(0, 70, by = 10)) + 
+  ylab("Deviance explained") +
+  scale_fill_manual(values=c("#5ab4ac","#b7b7b7","#d8b365"))
+
+p_orig + p_small
+```
+
+From this analysis, we see that we observe a similar increase in deviance explained across our three models when fitting the same, smallest dataset to all three models. This is reasuring as it tells us that the pattern of increasing deviance we report is not an artifact of data aggregation.
+
+## Cross-validation
+
+While AIC provides an approximation of predictive accuracy as measured by out-of-sample deviance, we also calculate the total deviance on test data withheld from model fitting. Following **[Pederson et al. (2019)](https://peerj.com/articles/6876/)**, we evaluate how well each of our three models fit to test data by calculating out-of-sample deviance. Total deviance can be interpreted similarly to the residual sum of squares for simple linear regression. We fit the smallest dataset to all three models, and we train the models on even years, and then use odd years as testing data.  
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+## The below comes from Pederson et al. (2019), and calculates the deviance of out-of-sample data, conditional on their mean predicted value from the model
+get_deviance <- function(model, y_pred, y_obs, weights = NULL){
+  stopifnot(length(y_obs)==length(y_pred))
+  #We don't use the weights term in this paper, but it can be useful if
+  #how well the model matters more for some sample points than others
+  if(is.null(weights)) weights = rep(1, times= length(y_obs))
+  #this uses the deviance residual function from the model family to
+  #calculate deviances for individual points
+  dev_residuals = model$family$dev.resids(y_obs, y_pred, weights)
+  return(sum(dev_residuals))
+}
+
+metadata_host_train <- subset(metadata_host, hydro_year%%2==0)
+metadata_host_test <- subset(metadata_host, hydro_year%%2==1)
+# mdat_sname_train %>% group_by(sname) %>% tally()
+# mdat_sname_test %>% group_by(sname) %>% tally()
+
+m1_train <- bam(PC1_AR~
+                        s(month_int, k=7, bs="cc") + 
+                        s(hydro_year, k=5), 
+                        select=T, 
+                        drop.unused.levels=FALSE, 
+                        data=metadata_host_train)
+
+m2_train <- bam(PC1_AR~
+                        s(month_int, k=7, bs="cc") +
+                        s(hydro_year, k=5) + 
+                        s(time, grp, k=50, bs="fs", m=1), 
+                        select=T, 
+                        drop.unused.levels=FALSE, 
+                        data=metadata_host_train)
+
+m3_train <- bam(PC1_AR~
+                        s(month_int, k=7, bs="cc") +
+                        s(hydro_year, k=5) + 
+                        s(time, grp, k=50, bs="fs", m=2) + 
+                        s(time, host, k=30, bs="fs", m=1), 
+                        select=T, 
+                        drop.unused.levels=FALSE, 
+                        data=metadata_host_train)
+
+# Out-of-sample predictive ability for each model
+model_test_summary = metadata_host_test %>%
+  mutate(
+    m1 = predict(m1_train, ., type="response"),
+    m2 = predict(m2_train, ., type="response"),
+    m3 = predict(m3_train, ., type="response")) %>%
+  plyr::summarise(
+    `m1` = format(get_deviance(m1_train, m1, PC1_AR), scientific = FALSE, digits=3),
+    `m2` = format(get_deviance(m2_train, m2, PC1_AR), scientific = FALSE, digits=3),
+    `m3` = format(get_deviance(m3_train, m3, PC1_AR), scientific = FALSE, digits=3)) %>%
+  gather()
+
+colnames(model_test_summary) <- c("Model", "Out-of-sample deviance")
+
+model_test_summary %>%
+  kable(digits=2, format='html', align="c", booktabs=T) %>% 
+  kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position")) %>%
+  row_spec(which.min(model_test_summary$`Out-of-sample deviance`), bold = T, color="black")
+```
+
+The result this cross-validation shows that Model 3 does a better job at predicting out-of-sample.
+
+## Effect of model complexity
+
+As a last sanity check, we simulated two data sets to investigate the effect of model complexity on deviance explained. As opposed to single-level models where goodness-of-fit measures like $R^2$ always increase with increasing number of model parameters, goodness-of-fit should not always increase with increasing parameterization because of the regularization component of multilevel models. 
+
+In the first scenario, we simulated data with a strong global (i.e. population level) effect, but little to no social group level effect. Here we don't want to see an increase in deviance explained with increasing model complexity, i.e. when we account for group-level differences. In the second scenario we do the opposite, simulating data with a weak global effect but a large average difference between social groups. This scenario is perhaps less usefull but it shows an extreme case where all of the variation in the model can be explained by group-level processes.   
+
+In both scenarios, we simulated data from 4 hosts (each with 100 samples) divided into two social groups. We fit two models mimicking model 1 and 2 to these data sets. To use the same terminology as in **[Pedersen et al. 2019](https://peerj.com/articles/6876/)**, this would correspond to a global smooth model (G), and a global smooth plus group-level smoother model (GS).
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Scenario 1
+# Simulate data: 4 individual hosts with 100 samples each, from 2 groups
+
+set.seed(5)
+
+n <- 100
+y <- matrix(0, 4, n)
+
+# global trend: mean of -1 in first half samples, mean +1 in second half samples
+baseline <- c(rnorm(n/2, -1), rnorm(n/2, 1))
+
+# all individuals have this baseline...
+y[1,] <- baseline
+y[2,] <- baseline
+y[3,] <- baseline
+y[4,] <- baseline
+
+# ...plus group-level noise
+y[1:2,] <- y[1:2,] + matrix(rnorm(n*4, 0, 0.5), 2, n)
+y[3:4,] <- y[3:4,] + matrix(rnorm(n*4, 0, 0.5), 2, n)
+
+# stick this in a data.frame
+idx <- 1:n
+sim1_dat <- data.frame(x=rep(idx, 4), 
+                 x_coarse=rep(round(idx, -1), 4), 
+                 y=c(y[1,], y[2,], y[3,], y[4,]),
+                 group=c(rep("g1", 2*n), rep("g2", 2*n)),
+                 indiv=c(rep("i1",n), rep("i2",n), rep("i3",n), rep("i4",n)))
+
+# fit a single global smooth
+m1_sim1 <- bam(y ~ s(x_coarse), select=F, method="ML", data=sim1_dat)
+# fit global smooth + group level smooth
+m2_sim1 <- bam(y ~ s(x_coarse) + s(x, group, bs="fs"), select=F, method="ML", data=sim1_dat)
+
+par(mfrow=c(1,2), mar=c(5,3,7,2))
+# plot m1 linear predictor
+plot(sim1_dat$x[1:100], sim1_dat$y[1:100], type="n", las=1, xlab=NA, ylab=NA, main="(A) Global smooth only")
+points(sim1_dat$x[1:100], sim1_dat$y[1:100], col="red")
+points(sim1_dat$x[101:200], sim1_dat$y[101:200], col="red")
+points(sim1_dat$x[201:300], sim1_dat$y[201:300], col="blue")
+points(sim1_dat$x[301:400], sim1_dat$y[301:400], col="blue")
+lines(sim1_dat$x[1:100], m1_sim1$linear.predictors[1:100], col="red")
+lines(sim1_dat$x[101:200], m1_sim1$linear.predictors[101:200], col="red")
+lines(sim1_dat$x[201:300], m1_sim1$linear.predictors[201:300], col="blue")
+lines(sim1_dat$x[301:400], m1_sim1$linear.predictors[301:400], col="blue")
+legend(0, 3.5, legend=c("Group 1","Group 2"), pch=19, cex=0.7, col=c("red","blue"))
+title(ylab="y", xlab="x", line=1.8, cex.lab=1.2)
+
+# plot m2 linear predictor
+plot(sim1_dat$x[1:100], sim1_dat$y[1:100], type="n", las=1, xlab=NA, ylab=NA, main="(B) Global smooth + \n group level smoother")
+points(sim1_dat$x[1:100], sim1_dat$y[1:100], col="red")
+points(sim1_dat$x[101:200], sim1_dat$y[101:200], col="red")
+points(sim1_dat$x[201:300], sim1_dat$y[201:300], col="blue") 
+points(sim1_dat$x[301:400], sim1_dat$y[301:400], col="blue") 
+lines(sim1_dat$x[1:100], m2_sim1$linear.predictors[1:100], col="red")
+lines(sim1_dat$x[101:200], m2_sim1$linear.predictors[101:200], col="red")
+lines(sim1_dat$x[201:300], m2_sim1$linear.predictors[201:300], col="blue") 
+lines(sim1_dat$x[301:400], m2_sim1$linear.predictors[301:400], col="blue") 
+legend(0, 3.5, legend=c("Group 1","Group 2"), pch=19, cex=0.7, col=c("red","blue"))
+title(ylab="y", xlab="x", line=1.8, cex.lab=1.2)
+```
+
+Simulated data with the fitted smooths. The left panel shows the simulated data with the fitted global smooth for the global smooth model (G), and the right panel shows the simulated data with the fitted global smooth for the global smooth plus group-level smoother model (GS). More specifically, the lines represent the fitted model prediction, colored by group. There are four lines (one for each host), but as they are identical, they are on top of each other. The y-axis corresponds to the response variable, and the x-axis to the predictor variable.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+p1 <- draw(m1_sim1)
+p2 <- draw(m2_sim1, select=1)
+p3 <- draw(m2_sim1, select=2)
+p4 <- ggplot() + theme_void() # empty plot
+plot_grid(p1, p2, p4, p3, labels=c("A","B","","C"))
+
+out_sim1 <- cbind(data.frame(Model=c("m1","m2")),
+                  data.frame(Deviance=c(m1_sim1$deviance,m2_sim1$deviance)),
+                  data.frame(AIC=c(AIC(m1_sim1),AIC(m2_sim1))),
+                  data.frame(`Deviance explained`= c(
+                                        round((summary(m1_sim1)$dev.expl*100),4),
+                                        round((summary(m2_sim1)$dev.expl*100),4))))
+
+colnames(out_sim1)[4] <- "Deviance explained"
+
+out_sim1 %>% 
+  kable(digits=2, format='html', align="c", booktabs=T) %>% 
+  kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position"))
+```
+
+The estimated smooths drawn by the `R` package `gratia`. (A) shows the estimated global smooth, $\mathtt{s(x\_coarse)}$, for the global smooth model (G). (B, C) show the estimated global smooth, $\mathtt{s(x\_coarse)}$, and the group-level smooth, $\mathtt{s(x, group)}$, for the global smooth plus group-level smoother model (GS). The y-axis shows the effect, and the x-axis the predictor variable. These plots show that the global smoother is identical across the two models, and this is because the effect of the group-level smoother to model fit is negligible.
+
+From this simulation, we can clearly see the effect of regularization: when there is a small average difference between functional responses (here simulated as a small amount of noise), `mgcv` penalizes the group-specific functions towards zero. From the table, we can see that this does not affect goodness-of-fit measures such as deviance or AIC, nor does it affect deviance explained. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Scenario 2
+# Simulate data: 4 individual hosts with 100 samples each, from 2 groups
+
+set.seed(6)
+
+n <- 100 
+t <- seq(0,4*pi,,100)
+y <- matrix(0, 4, n)
+
+a <- 3
+b <- 2
+amp <- 2
+
+# The first and second pair of individuals have the same sine-waves but with some uniform error
+# The second pair has mirrored sine-waves compared to the first pair. This means that the global effect will be close to zero, while group differences will be large.  
+
+y[1,] <- a*sin(b*t)+runif(n)*amp
+y[2,] <- a*sin(b*t)+runif(n)*amp
+y[3,] <- a*-sin(b*t)+runif(n)*amp
+y[4,] <- a*-sin(b*t)+runif(n)*amp
+
+idx <- 1:n
+sim2_dat <- cbind(data.frame(id=1:400),
+             data.frame(x=rep(idx, 4)),
+             data.frame(y=c(y[1,],y[2,],y[3,],y[4,])),
+             data.frame(group=c(rep("g1", n), rep("g1", n), rep("g2", n), rep("g2", n))))
+
+# fit a single global smooth
+m1_sim2 <- bam(y ~ s(x), select=F, method="ML", data=sim2_dat)
+# fit global smooth + group level smooth
+m2_sim2 <- bam(y ~ s(x, m=2) + s(x, group, bs="fs", m=1), select=F, method="ML", data=sim2_dat)
+
+par(mfrow=c(1,2), mar=c(5,3,7,2))
+# plot m1 linear predictor
+plot(sim2_dat$x[1:100], sim2_dat$y[1:100], ylim=c(-4,6), type="p", col="red", las=1, xlab=NA, ylab=NA, main="(A) Global smooth only")
+points(sim2_dat$x[101:200], sim2_dat$y[101:200], col="red")
+points(sim2_dat$x[201:300], sim2_dat$y[201:300], col="blue")
+points(sim2_dat$x[301:400], sim2_dat$y[301:400], col="blue")
+lines(sim2_dat$x[1:100], ((m2_sim2$linear.predictors[1:100]+m2_sim2$linear.predictors[101:200]+m2_sim2$linear.predictors[201:300]+m2_sim2$linear.predictors[301:400])/4), col="black")
+title(ylab="y", xlab="x", line=1.8, cex.lab=1.2)
+legend("bottomleft", legend=c("Group 1","Group 2"), pch=19, cex=0.7, col=c("red","blue"))
+
+# plot m2 linear predictor
+plot(sim2_dat$x[1:100], sim2_dat$y[1:100], ylim=c(-4,6), type="p", col="red", las=1, xlab=NA, ylab=NA, main="(B) Global smooth + \n group level smoother")
+points(sim2_dat$x[101:200], sim2_dat$y[101:200], col="red")
+points(sim2_dat$x[201:300], sim2_dat$y[201:300], col="blue")
+points(sim2_dat$x[301:400], sim2_dat$y[301:400], col="blue")
+lines(sim2_dat$x[1:100], m2_sim2$linear.predictors[1:100], col="red")
+lines(sim2_dat$x[101:200], m2_sim2$linear.predictors[101:200], col="red")
+lines(sim2_dat$x[201:300], m2_sim2$linear.predictors[201:300], col="blue")
+lines(sim2_dat$x[301:400], m2_sim2$linear.predictors[301:400], col="blue")
+title(ylab="y", xlab="x", line=1.8, cex.lab=1.2)
+legend("bottomleft", legend=c("Group 1","Group 2"), pch=19, cex=0.7, col=c("red","blue"))
+```
+
+Simulated data with the fitted smooths. The left panel shows the simulated data colored by groups but with the fitted global smooth from the global smooth model (G). The right panel shows the simulated data with the fitted global smooth from the global smooth plus group-level smoother model (GS). In (A), the global smooth represents the average of the two group-level smoothers, and in panel (B), group-level smoothers are plotted individually. It is clear that accounting for groups would result in a more parsimonious model. The y-axis corresponds to the response variable, and the x-axis to the predictor variable.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+
+p1 <- draw(m1_sim2)
+p2 <- draw(m2_sim2, select=1)
+p3 <- draw(m2_sim2, select=2)
+p4 <- ggplot() + theme_void() # empty plot
+plot_grid(p1, p2, p4, p3, labels=c("A","B","","C"))
+
+df4 <- cbind(data.frame(Model=c("m1","m2")),
+                  data.frame(Deviance=c(m1_sim2$deviance,m2_sim2$deviance)),
+                  data.frame(AIC=c(AIC(m1_sim2),AIC(m2_sim2))),
+                  data.frame(`Deviance explained`= c(
+                                        round((summary(m1_sim2)$dev.expl*100),4),
+                                        round((summary(m2_sim2)$dev.expl*100),4))))
+colnames(df4)[4] <- "Deviance explained"
+
+df4 %>% 
+  kable(digits=2, format='html', align="c", booktabs=T) %>% 
+  kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position"))
+```
+
+Compared to the previous simulation scenario, regularization here works through partial pooling of information to produce estimates for each group that are less underfit than the grand mean and less overfit than the no-pooling estimates. In this scenario, it is clear that we do better by accounting for group level differences. These two simulation scenarios show that the number of model parameters does not necessarily lead to a higher goodness-of-fit (nor deviance explained) as this is counteracted by regularization.
+
+Finally, the results from all sanity checks makes us more confident in the results we report, especially that the increase in deviance explained is not an artifact from data aggregation or increasing model complexity.
+
+
+
+

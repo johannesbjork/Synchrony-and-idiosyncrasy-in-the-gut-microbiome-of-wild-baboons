@@ -1,0 +1,618 @@
+---
+title: "Time-decay (autocorrelation) plots"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(plotrix)
+library(compositions)
+library(multidplyr)
+library(parallel)
+```
+
+### Same host same group
+
+#### Load data and pre-processing
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load phyloseq object
+ps <- readRDS("~/../ps.RDS")
+
+# Keep only individual hosts with at least 2 samples
+ps <- prune_samples(sample_names(sample_data(ps)[sample_data(ps)$host %in% names(table(sample_data(ps)$host)[table(sample_data(ps)$host)>=2]),]), ps)
+
+# Extract metadata and the feature table after filtering
+feature_table <- as(otu_table(ps),"matrix")
+metadata <- as(sample_data(ps),"data.frame")
+metadata <- metadata[,c("sample_id","collection_date","month","season","hydro_year","host","grp")]
+```
+
+#### Compute Aitchison distance/similarity on whole ASV table
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+pseudocount <- 0.65 # for clr-transformation
+feature_table_clr <- t(apply(t(feature_table)+pseudocount, 2, compositions::clr))
+aitch_dist <- dist(feature_table_clr, method="euclidean")
+aitch_sim <- (1/(1+aitch_dist/max(aitch_dist)))
+aitch_dist_mat <- as.matrix(aitch_dist)
+aitch_sim_mat <- as.matrix(aitch_sim)
+```
+
+#### Code to compute distance between samples from the same host in the same group
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Create a list of host-specific metadata tables
+same.host.same.grp_mdat_ls <- vector("list", length(unique(metadata$host)))
+for(i in 1:length(unique(metadata$host))){
+  same.host.same.grp_mdat_ls[[i]] <- metadata[metadata$host %in% unique(metadata$host)[i],]
+}
+
+same.host.same.grp_lags_ls <- vector("list", length(unique(metadata$host)))
+
+for(n in 1:length(unique(metadata$host))){
+  
+  # Print the number of hosts processed
+  # print(n) 
+  
+  # This extracts the Aitchison distances/similarity values for each individual host's samples and converts it to a distance object (it does not compute any distances, that's already done) 
+  ddist <- as.dist(aitch_dist_mat[same.host.same.grp_mdat_ls[[n]]$sample_id, same.host.same.grp_mdat_ls[[n]]$sample_id])
+  dsim <- as.dist(aitch_sim_mat[same.host.same.grp_mdat_ls[[n]]$sample_id, same.host.same.grp_mdat_ls[[n]]$sample_id])
+  
+  # As each individual host's samples are ordered by collection_date, it's easy to combine microbiome distances with time distances between samples  
+  lags <- cbind(data.frame(aitch_dist=as.numeric(ddist)),
+                data.frame(aitch_sim=as.numeric(dsim)),
+                data.frame(lags_days=c(ceiling(dist(as.Date(same.host.same.grp_mdat_ls[[n]]$collection_date))))),
+                data.frame(lags_weeks=c(ceiling(dist(as.Date(same.host.same.grp_mdat_ls[[n]]$collection_date))/7))),
+                data.frame(lags_months=c(ceiling(dist(as.Date(same.host.same.grp_mdat_ls[[n]]$collection_date))/30.42)))
+  )
+  
+  lags <- lags[order(lags$lags_days, lags$lags_weeks, lags$lags_months),]
+  
+  same.host.same.grp_lags_ls[[n]] <- lags
+  
+  # Remove as these are large objects
+  rm(ddist)
+  rm(dsim)
+}
+
+same.host.same.grp <- do.call(rbind, same.host.same.grp_lags_ls)
+rm(same.host.same.grp_lags_ls)
+```
+
+Next we compute the 95% CI and plot microbial community similarity against daily and monthly lags
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+same.host.same.grp_days <- same.host.same.grp %>%
+  group_by(lags_days) %>%
+  dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+  mutate(rho_se=rho_sd / sqrt(sample_size), 
+         lower_ci=rho_mean - qt(1 - (0.05 / 2), sample_size - 1) *rho_se,
+         upper_ci=rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se) %>% 
+  filter(lags_days <= 3500) # beyond this lag, the number of samples are getting much fewer blowing up the 95% CI  
+
+same.host.same.grp_months <- same.host.same.grp %>%
+  group_by(lags_months) %>%
+  dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+  mutate(rho_se=rho_sd / sqrt(sample_size), 
+         lower_ci=rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+         upper_ci=rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se) %>%
+  filter(lags_months <= 110)
+
+# Compute moving averages
+same.host.same.grp_days_ma <- TTR::SMA(same.host.same.grp_days$rho_mean, n=7)
+same.host.same.grp_months_ma <- TTR::SMA(same.host.same.grp_months$rho_mean, n=1)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE, collapse=TRUE}
+# Time-decay / autocorrelation plot for days 
+axisRange <- c(-10,3500)
+# Empty plot
+plot(x=same.host.same.grp_days$lags_days,y=same.host.same.grp_days$rho_mean, ylab="Community similarity", xlab="Number of days between samples", type="n", ylim=c(0.6,0.8), las=1)
+
+# Add polygon/ribbons for 95% CI
+with(same.host.same.grp_days, polygon(c(rev(0:(length(same.host.same.grp_days$lags_days)-1)), 0:(length(same.host.same.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#dfc27d",0.9), border=FALSE))
+
+# Add points
+points(x=same.host.same.grp_days$lags_days,y=same.host.same.grp_days$rho_mean, col=alpha("#bf822c",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(same.host.same.grp_days$lags_days, same.host.same.grp_days_ma, col="#8c510a", type="l", lwd=2)
+
+# Time-decay / autocorrelation plot for months 
+axisRange <- c(-1,112)
+plot(x=same.host.same.grp_months$lags_months,y=same.host.same.grp_months$rho_mean, xaxs = "i", yaxs = "i", ylim=c(0.60,0.8), xlim=axisRange, ylab="Community similarity", xlab="Number of months between samples", type="n", las=1, xaxt='n')
+
+# Add polygon/ribbons for 95% CI
+with(same.host.same.grp_months, polygon(c(rev(0:(length(same.host.same.grp_months$lags_months)-1)), 0:(length(same.host.same.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#f6e8c3",0.9), border=FALSE))
+
+# Add points
+points(x=same.host.same.grp_months$lags_months,y=same.host.same.grp_months$rho_mean, col=alpha("#bf812d",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(same.host.same.grp_months$lags_months, same.host.same.grp_months_ma, col="#8c510a", type="l", lwd=1)
+axis(side=1, seq(0,112, by=12))
+```
+
+### Different host same group
+
+#### Load data and pre-processing
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load phyloseq object
+ps <- readRDS("~/Documents/Projects/baboonWorld/metagenomics_baboons/submission/data_for_osf/ps.RDS")
+
+# Extract metadata and the feature table after filtering
+feature_table <- as(otu_table(ps),"matrix")
+metadata <- as(sample_data(ps),"data.frame")
+metadata <- metadata[,c("sample_id","collection_date","month","season","hydro_year","host","grp")]
+
+# Here we focus on the group-level metadata to remove any fission products (fission is when one group splits into two new groups). 
+metadata_grp <- metadata %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-10-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+```
+
+### Compute Aitchison distance/similarity on whole ASV table
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# If you already have these objects loaded, you don't need to do read them in again.
+pseudocount <- 0.65 # for clr-transformation
+feature_table_clr <- t(apply(t(feature_table)+pseudocount, 2, compositions::clr))
+aitch_dist <- dist(feature_table_clr, method="euclidean")
+aitch_sim <- (1/(1+aitch_dist/max(aitch_dist)))
+aitch_dist_mat <- as.matrix(aitch_dist)
+aitch_sim_mat <- as.matrix(aitch_sim)
+
+# Remove as these are large objects
+rm(aitch_sim)
+rm(aitch_dist)
+```
+
+#### Code to compute the distance between samples from different hosts in the same group
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+different.host.same.grp_mdat_ls <- vector("list", length(unique(metadata_grp$grp)))
+for(i in 1:length(unique(metadata_grp$grp))){
+  different.host.same.grp_mdat_ls[[i]] <- metadata_grp[metadata_grp$grp %in% unique(metadata_grp$grp)[i],]
+}
+
+different.host.same.grp_lags_ls <- vector("list", length(unique(metadata_grp$grp)))
+
+for(n in 1:length(unique(metadata_grp$grp))){
+  
+  # Print the number of grps processed
+  # print(n)
+  
+  # This extracts the Aitchison distances/similarity values for each group's samples and converts it to a distance object (it does not compute any distances, that's already done)   
+  ddist <- as.dist(aitch_dist_mat[different.host.same.grp_mdat_ls[[n]]$sample_id,   different.host.same.grp_mdat_ls[[n]]$sample_id])
+  dsim <- as.dist(aitch_sim_mat[different.host.same.grp_mdat_ls[[n]]$sample_id, different.host.same.grp_mdat_ls[[n]]$sample_id])
+  
+  # Temporarily convert to matrices
+  aitch_dist_host <- as.matrix(ddist)
+  aitch_sim_host <- as.matrix(dsim)
+
+  # Set row and colnames to host ids
+  colnames(aitch_dist_host) <- rownames(aitch_dist_host) <- colnames(aitch_sim_host) <- rownames(aitch_sim_host) <- different.host.same.grp_mdat_ls[[n]]$host
+
+  # This sets submatrices (rows and cols) within each group-matrix that correspond to samples from the same individual host to NA
+  # This is done as we don't want to compare samples from the same individual host in the same group, but only samples from different individual hosts in the same group 
+  for(host in unique(colnames(aitch_dist_host))){
+    aitch_dist_host[which(rownames(aitch_dist_host)==host),which(colnames(aitch_dist_host)==host)] <- NA
+    aitch_sim_host[which(rownames(aitch_sim_host)==host),which(colnames(aitch_sim_host)==host)] <- NA
+  }
+
+  ## Switch back to distance objects 
+  aitch_dist_host <- as.dist(aitch_dist_host)
+  aitch_sim_host <- as.dist(aitch_sim_host)
+
+  lags <- cbind(
+                data.frame(aitch_dist=as.numeric(aitch_dist_host)),
+		            data.frame(aitch_sim=as.numeric(aitch_sim_host)),
+                data.frame(lags_days=c(ceiling(dist(as.Date(different.host.same.grp_mdat_ls[[n]]$collection_date))))),
+                data.frame(lags_weeks=c(ceiling(dist(as.Date(different.host.same.grp_mdat_ls[[n]]$collection_date))/7))),
+                data.frame(lags_months=c(ceiling(dist(as.Date(different.host.same.grp_mdat_ls[[n]]$collection_date))/30.417)))
+  )
+  
+  # This removes those NAs (for samples from the same individual hosts) that we introduced above
+  lags <- lags[complete.cases(lags),]
+  
+  lags <- lags[order(lags$lags_days, lags$lags_weeks, lags$lags_months),]
+  
+  different.host.same.grp_lags_ls[[n]] <- lags
+  
+  # Remove as these are large objects
+  rm(aitch_dist_host)
+  rm(aitch_sim_host)
+  
+}
+
+# Remove as these are large objects
+rm(aitch_sim_mat)
+rm(aitch_sim_mat)
+  
+different.host.same.grp <- do.call(rbind, different.host.same.grp_lags_ls)
+
+rm(different.host.same.grp_lags_ls)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+different.host.same.grp_days <- different.host.same.grp %>%
+  group_by(lags_days) %>%
+  dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim), sample_size=n()) %>%
+  mutate(rho_se = rho_sd / sqrt(sample_size), 
+         lower_ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+         upper_ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se) %>%
+  filter(lags_days <= 3500) # beyond this lag, the number of samples are getting much fewer blowing up the 95% CI  
+
+different.host.same.grp_months <- different.host.same.grp %>%
+  group_by(lags_months) %>%
+  dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+  mutate(rho_se = rho_sd / sqrt(sample_size), 
+         lower_ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+         upper_ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se) %>%
+  filter(lags_months <= 110)
+
+# Compute moving averages
+different.host.same.grp_days_ma <- TTR::SMA(different.host.same.grp_days$rho_mean, n=7)
+different.host.same.grp_months_ma <- TTR::SMA(different.host.same.grp_months$rho_mean, n=1)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Time-decay / autocorrelation plot for days 
+
+# Empty plot
+axisRange <- c(-10,3500)
+plot(x=different.host.same.grp_days$lags_days,y=different.host.same.grp_days$rho_mean, ylab="Community similarity", xlab="Number of days between samples", type="n", xlim=axisRange, xaxt="n", las=1)
+
+# Add polygon/ribbons for 95% CI
+with(different.host.same.grp_days, polygon(c(rev(0:(length(different.host.same.grp_days$lags_days)-1)), 0:(length(different.host.same.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#c5ede3",0.9), border = FALSE))
+
+# Add points
+points(x=different.host.same.grp_days$lags_days,y=different.host.same.grp_days$rho_mean, col=alpha("#9ad5c8",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(different.host.same.grp_days$lags_days, different.host.same.grp_days_ma, col="#2ca25f", type="l")
+axis(side=1, seq(0,3500, by=365))
+
+###############
+
+# Time-decay / autocorrelation plot for months 
+axisRange <- c(-1,112)
+plot(x=different.host.same.grp_months$lags_months,y=different.host.same.grp_months$rho_mean, xaxs = "i", yaxs = "i", ylim=c(0.60,0.8), xlim=axisRange, ylab="Community similarity", xlab="Number of months between samples", type="n", las=1, xaxt='n')
+
+# Add polygon/ribbons for 95% CI
+with(different.host.same.grp_months, polygon(c(rev(0:(length(different.host.same.grp_months$lags_months)-1)), 0:(length(different.host.same.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#c5ede3",0.9), border=FALSE))
+
+# Add points
+points(x=different.host.same.grp_months$lags_months,y=different.host.same.grp_months$rho_mean, col=alpha("#9ad5c8",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(different.host.same.grp_months$lags_months, different.host.same.grp_months_ma, col="#2ca25f", type="l", lwd=2)
+axis(side=1, seq(0,112, by=12))
+```
+
+### Different host different group
+
+To compute the distance between all samples beloning to different hosts in different groups involves many more pairwise comparisons and is hence a much more computationally intensive task. Don't run the below code on the full dataset on a laptop; I ran it as an array job (splitting it up into 100 individual tasks) on a High Performance Cluster, and it still took 4-5 days to finish. I then processed the output (i.e. compute summary statistics) using `Unix` and `Python` code as `R` have problems reading in large amounts of data. To familiarize yourself with the code, I would recommend running the code on a small subset of data before trying to run on a larger dataset, like ours. 
+
+#### Load data and pre-processing
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load phyloseq object
+ps <- readRDS("~/Documents/Projects/baboonWorld/metagenomics_baboons/submission/data_for_osf/ps.RDS")
+
+# Extract metadata and the feature table after filtering
+feature_table <- as(otu_table(ps),"matrix")
+metadata <- as(sample_data(ps),"data.frame")
+metadata <- metadata[,c("sample_id","collection_date","month","season","hydro_year","host","grp",)]
+
+# Here we focus on the group-level metadata to remove any fission products (fission is when one group splits into two new groups).
+metadata_grp <- metadata %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-10-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+
+# Extract a small dataset to showcase the below code (comment out when running the whole dataset) 
+metadata_grp <- metadata_grp %>% 
+  group_by(grp) %>% 
+  sample_n(5) %>%
+  ungroup()
+```
+
+#### Compute Aitchison distance/similarity on whole ASV table
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# If you already have these objects loaded, you don't need to do read them in again.
+pseudocount <- 0.65 # for clr-transformation
+feature_table_clr <- t(apply(t(feature_table)+pseudocount, 2, compositions::clr))
+aitch_dist <- dist(feature_table_clr, method="euclidean")
+aitch_sim <- (1/(1+aitch_dist/max(aitch_dist)))
+aitch_dist_mat <- as.matrix(aitch_dist)
+aitch_sim_mat <- as.matrix(aitch_sim)
+
+rm(aitch_dist)
+rm(aitch_sim)
+```
+
+#### Functions to identify pairs of samples from different hosts in different groups
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# This functions produces a data.frame containing all pairs of samples from different hosts in different groups
+do_pairwise <- function(df) {
+  
+  metadat <- df %>% 
+    mutate(sample_id=factor(sample_id))
+  
+  # combn() is a fast way of creating all pairwise comparisons but without self (e.g., A-A) or duplicates (A-B, B-A)
+  pairs_sample.id <- t(combn(metadat$sample_id,2)) 
+  pairs_sample.id_df <- as_tibble(matrix(NA,nrow=nrow(pairs_sample.id), ncol=2, dimnames=list(c(),c("sample_1","sample_2")))) %>%
+    mutate(sample_1=as.character(pairs_sample.id[,1]), sample_2=as.character(pairs_sample.id[,2]))
+  
+  # add column sample_1 and sample_2 to data.frame metadat
+  metadat <- metadat %>% 
+    mutate(sample_1=as.character(sample_id), sample_2=as.character(sample_id))
+  
+  # joins sample, host and group identity to all unique sample pairs identified in pairs_sample.id_df
+  pairs_sample.id_df <- 
+    left_join(pairs_sample.id_df, select(metadat, sample_1, host_1=host, grp_1=grp, collection_date_1=collection_date), by="sample_1") %>%
+    left_join(select(metadat, sample_2, host_2=host, grp_2=grp, collection_date_2=collection_date), by="sample_2") %>%
+    # Filter out samples from the same group and individual host
+    filter(grp_1 != grp_2 & host_1 != host_2) %>%
+    arrange(collection_date_1, collection_date_2)
+  
+  return(pairs_sample.id_df)
+}
+
+# This functions computes the temporal lags for each pair of samples 
+compute_lags <- function(pair_df) {
+  pair_df <- pair_df %>% 
+    mutate(lags_days=as.numeric(abs(difftime(collection_date_2, collection_date_1, units="days"))),
+           lags_weeks=as.numeric(ceiling(abs(difftime(collection_date_2, collection_date_1, units="weeks")))),
+           lags_months=as.numeric(ceiling(abs(as.numeric(difftime(collection_date_2, collection_date_1, units="days"))/30.42))))
+}
+```
+
+#### Execute above functions
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Run functions
+different.host.different.grp <- do_pairwise(metadata_grp)
+different.host.different.grp <- compute_lags(different.host.different.grp) 
+```
+
+#### Functions to extract the Aitchison distance/similarity for the focal pair of samples
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# These two functions extract the Aitchison distance/similarity for the focal pair of samples
+# These functions are executed below
+compute_aitchison_distance <- function(pair) {
+  ddist <- as.dist(aitch_dist_mat[pair, pair])
+  return(ddist)
+}
+
+compute_aitchison_similarity <- function(pair) {
+  dsim <- as.dist(aitch_sim_mat[pair, pair])
+  return(dsim)
+}
+```
+
+### multidplyr to partition job across multiple cores
+Below we first show how to use multidplyr to partition our job across multiple cores. However, on our dataset, this was not enough. In the proceeding code chunk, we show how to create an array job where each array task is sent to its own computer node on a High Performance Cluster. Then within each array task, we use `multidplyr` to spread out the task across multiple cores. 
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Code using multidplyr which allows you to partition a data frame across multiple cores
+cl <- parallel::detectCores() - 2
+cluster <- multidplyr::new_cluster(cl)
+
+# Use partition() to automatically spread the data across the cores. In this case we don't need to ensure that all of the observations belonging to a group end up on the same core; otherwise, this is done by adding a group_by() before partition()
+df_partition <- different.host.different.grp %>% partition(cluster=cluster)
+
+# These commands make libraries, data, and functions availible to all the cores
+cluster_library(cluster,"tidyverse") 
+cluster_library(cluster,"compositions")
+cluster_copy(cluster,"aitch_dist_mat")
+cluster_copy(cluster, "aitch_sim_mat")
+cluster_copy(cluster,"compute_aitchison_distance")
+cluster_copy(cluster,"compute_aitchison_similarity")
+
+# This is as working on a regular data frame, but the computations are spread across multiple cores. Once the computation is finished, we use collect() to bring the data back to the host session. 
+output <- df_partition %>% 
+  mutate(pair_paste=paste(sample_1, sample_2,sep="_")) %>% 
+  mutate(pair=str_split(pair_paste,"\\_", simplify=F)) %>% 
+  select(-pair_paste) %>%
+  mutate(aitch_dist=map_dbl(pair, compute_aitchison_distance)) %>%
+  mutate(aitch_sim=map_dbl(pair, compute_aitchison_similarity)) %>% 
+  select(lags_days, lags_weeks, lags_months, aitch_dist, aitch_sim) %>%
+  collect()
+```
+
+### Array job + multidplyr
+Here we show how to make the above `multidplyr` code work as an `array job`.
+Running this code on the whole dataset, we first split it up into 100 subsets, where each subset gets treated as an array task which is sent to its own computer node on a High Performance Cluster. Then within each array task, we use `multidplyr` to further spread out the task across multiple cores (on the same node).     
+```{r, echo=T, eval=F, message=FALSE, warning=FALSE}
+# Code for array job on HPC using multidplyr
+args <- commandArgs(trailingOnly = TRUE)
+print(getwd())
+n = as.integer( args[1] )
+print(n) # n here indexes the n-th array job 
+
+cl <- 36 # I used 36 cores for each array task  
+cluster <- multidplyr::new_cluster(cl)
+
+# Split it up to ease computational burden -- this should be the same as n array tasks
+num_dfs <- 100
+different.host.different.grp_ls <- split(different.host.different.grp, rep(1:num_dfs, each=round(NROW(different.host.different.grp)/num_dfs, -4)))
+
+print(paste0("Compute for array: ",n))
+
+different.host.different.grp_n <- different.host.different.grp_ls[[n]]
+
+df_partition <- different.host.different.grp_n %>% partition(cluster=cluster)
+
+# These commands make libraries, data, and functions availible to all the cores
+cluster_library(cluster,"tidyverse") 
+cluster_library(cluster,"compositions")
+cluster_copy(cluster,"aitch_dist_mat")
+cluster_copy(cluster, "aitch_sim_mat")
+cluster_copy(cluster,"compute_aitchison_distance")
+cluster_copy(cluster,"compute_aitchison_similarity")
+
+# This is as working on a regular data frame, but the computations are spread across multiple cores. Once the computation is finished, we use collect() to bring the data back to the host session. 
+output_array <- df_partition %>% 
+  mutate(pair_paste=paste(sample_1, sample_2,sep="_")) %>% 
+  mutate(pair=str_split(pair_paste,"\\_", simplify=F)) %>% 
+  select(-pair_paste) %>%
+  mutate(aitch_dist=map_dbl(pair, compute_aitchison_distance)) %>%
+  mutate(aitch_sim=map_dbl(pair, compute_aitchison_similarity)) %>% 
+  select(lags_days, lags_weeks, lags_months, aitch_dist, aitch_sim) %>%
+  collect()
+
+write.csv(output_array, paste0("different.host.different.grp.",n,".csv"))
+```
+
+For the above code to work as an array job, you need to create a bash script (ending in `.sh`) which is very similar to the `.qsub` file you may be used to (if you submit jobs to HPC). Note that the below code chunks cannot be executed as they are not `R` code (hence `eval=F`.   
+```{r, echo=T, eval=F, message=FALSE, warning=FALSE}
+#$ -pe smp 36		 # Specify parallel environment and legal core size
+#$ -q            # Specify queue
+#$ -N            # Specify job name
+#$ -t 1-100      # Specify number of array tasks; in this case, 1-to-100.  
+
+# To run the array job, you also need to add this (${SGE_TASK_ID} indexes the n-th array task)
+Rscript name_of_bash_script.sh ${SGE_TASK_ID} 
+```
+
+The above array will produce 100 .csv files which have to be combined prior of computing any summary statistics. The below unix script combines these files to a single file called `different.host.different.grp.combined.csv`. 
+```{r, echo=T, eval=F, message=FALSE, warning=FALSE}
+#!/bin/bash
+OutFileName="different.host.different.grp.combined.csv"                       # Fix the output name
+i=0                                                                           # Reset a counter
+for filename in ./different.host.different.grp.*.csv; do 
+ if [ "$filename"  != "$OutFileName" ] ;                                      # Avoid recursion 
+ then 
+   if [[ $i -eq 0 ]] ; then 
+      head -1  "$filename" >   "$OutFileName"                                 # Copy header if it is the first file
+   fi
+   tail -n +2  "$filename" >>  "$OutFileName"                                 # Append from the 2nd line each file
+   i=$(( $i + 1 ))                                                            # Increase the counter
+ fi
+done
+```
+
+Becuase `R` has trouble reading in large amounts of data (i.e. RAM intenstive jobs), I used `Pada` in `Python` to compute the summary statistics. As you see from the below code, `Panda` allows you to write `Python` code in a similar manner to `tidyverse`.  
+```{r, echo=T, eval=F, message=FALSE, warning=FALSE}
+import numpy as np
+import pandas as pd
+from dfply import *
+
+data = pd.read_csv("different.host.different.grp.combined.csv", index_col=0) 
+
+different_host_different_grp_days = (data >>
+    group_by(X.lags_days) >>
+    summarize(rho=X.aitch_sim.mean(), rho_sd=X.aitch_sim.std(ddof=1), rho_se=X.aitch_sim.sem(), sample_size=X.aitch_sim.count()) >>
+    mutate(lower_ci=X.rho-X.rho_se*1.96, upper_ci=X.rho+X.rho_se*1.96)
+)
+different_host_different_grp_days.to_csv('different.host.different.grp_days.csv')
+
+
+different_host_different_grp_months = (data >>
+    group_by(X.lags_months) >>
+    summarize(rho=X.aitch_sim.mean(), rho_sd=X.aitch_sim.std(ddof=1), rho_se=X.aitch_sim.sem(), sample_size=X.aitch_sim.count()) >>
+    mutate(lower_ci=X.rho-X.rho_se*1.96, upper_ci=X.rho+X.rho_se*1.96)
+)
+different_host_different_grp_months.to_csv('different.host.different.grp_months.csv')
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Here we read in the summary statistics  already computed using all data
+different.host.different.grp_days <- read.csv("/Users/johannes/Documents/Projects/baboonWorld/metagenomics_baboons/submission/data_for_osf/different.host.different.grp_days.csv", header=T, row.names=1, stringsAsFactors=F) %>% 
+  mutate(rho_mean=rho) %>% dplyr::select(-rho)
+
+different.host.different.grp_months <- read.csv("/Users/johannes/Documents/Projects/baboonWorld/metagenomics_baboons/submission/data_for_osf/different.host.different.grp_months.csv", header=T, row.names=1, stringsAsFactors=F) %>% 
+  mutate(rho_mean=rho) %>% dplyr::select(-rho)
+
+different.host.different.grp_days <- different.host.different.grp_days %>% 
+  filter(lags_days <= 3500)
+
+different.host.different.grp_months <- different.host.different.grp_months %>% 
+  filter(lags_months <= 110)
+
+# Compute moving averages
+different.host.different.grp_days_ma <- TTR::SMA(different.host.different.grp_days$rho_mean, n=7)
+different.host.different.grp_months_ma <- TTR::SMA(different.host.different.grp_months$rho_mean, n=1)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Time-decay / autocorrelation plot for days 
+
+# Empty plot
+axisRange <- c(-10,3500)
+plot(x=different.host.different.grp_days$lags_days,y=different.host.different.grp_days$rho_mean, ylab="Community similarity", xlab="Number of days between samples", type="n", xlim=axisRange, xaxt="n", las=1)
+
+# Add polygon/ribbons for 95% CI
+with(different.host.different.grp_days, polygon(c(rev(0:(length(different.host.different.grp_days$lags_days)-1)), 0:(length(different.host.different.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#f2897e",0.9), border = FALSE))
+
+# Add points
+points(x=different.host.different.grp_days$lags_days,y=different.host.different.grp_days$rho_mean, col=alpha("#fdbb84",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(different.host.different.grp_days$lags_days, different.host.different.grp_days_ma, col="#e34a33", type="l")
+axis(side=1, seq(0,3500, by=365))
+
+###############
+
+# Time-decay / autocorrelation plot for months 
+axisRange <- c(-1,112)
+plot(x=different.host.different.grp_months$lags_months,y=different.host.different.grp_months$rho_mean, xaxs = "i", yaxs = "i", ylim=c(0.60,0.8), xlim=axisRange, ylab="Community similarity", xlab="Number of months between samples", type="n", las=1, xaxt='n')
+
+# Add polygon/ribbons for 95% CI
+with(different.host.different.grp_months, polygon(c(rev(0:(length(different.host.different.grp_months$lags_months)-1)), 0:(length(different.host.different.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#f2897e",0.9), border=FALSE))
+
+# Add points
+points(x=different.host.different.grp_months$lags_months,y=different.host.different.grp_months$rho_mean, col=alpha("#fdbb84",1), cex=0.5, pch=19)
+
+# Add line moving average
+points(different.host.different.grp_months$lags_months, different.host.different.grp_months_ma, col="#e34a33", type="l", lwd=2)
+axis(side=1, seq(0,112, by=12))
+```
+
+Below we combine all three lines into one plot.
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Time-decay / autocorrelation plot for days 
+
+# Empty plot
+axisRange <- c(-10,3500)
+plot(x=different.host.same.grp_days$lags_days,y=different.host.same.grp_days$rho_mean, ylab="Community similarity", xlab="Number of days between samples", type="n", xlim=axisRange, xaxt="n", las=1, ylim=c(0.6,0.8))
+
+# Same host same group
+with(same.host.same.grp_days, polygon(c(rev(0:(length(same.host.same.grp_days$lags_days)-1)), 0:(length(same.host.same.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#dfc27d",0.9), border=FALSE))
+points(x=same.host.same.grp_days$lags_days,y=same.host.same.grp_days$rho_mean, col=alpha("#bf822c",1), cex=0.5, pch=19)
+points(same.host.same.grp_days$lags_days, same.host.same.grp_days_ma, col="#8c510a", type="l")
+
+# Different host same group
+with(different.host.same.grp_days, polygon(c(rev(0:(length(different.host.same.grp_days$lags_days)-1)), 0:(length(different.host.same.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#c5ede3",0.9), border = FALSE))
+points(x=different.host.same.grp_days$lags_days,y=different.host.same.grp_days$rho_mean, col=alpha("#9ad5c8",1), cex=0.5, pch=19)
+points(different.host.same.grp_days$lags_days, different.host.same.grp_days_ma, col="#2ca25f", type="l")
+
+# Different host different group
+# Add polygon/ribbons for 95% CI
+with(different.host.different.grp_days, polygon(c(rev(0:(length(different.host.different.grp_days$lags_days)-1)), 0:(length(different.host.different.grp_days$lags_days)-1)), c(rev(lower_ci), upper_ci), col=alpha("#f2897e",0.9), border = FALSE))
+points(x=different.host.different.grp_days$lags_days,y=different.host.different.grp_days$rho_mean, col=alpha("#fdbb84",1), cex=0.5, pch=19)
+points(different.host.different.grp_days$lags_days, different.host.different.grp_days_ma, col="#e34a33", type="l")
+axis(side=1, seq(0,3500, by=365))
+
+#################
+# Time-decay / autocorrelation plot for months 
+axisRange <- c(-1,112)
+plot(x=different.host.same.grp_months$lags_months,y=different.host.same.grp_months$rho_mean, ylab="Community similarity", xlab="Number of months between samples", type="n", xlim=axisRange, xaxt="n", las=1, ylim=c(0.6,0.8))
+
+# Same host same group
+with(same.host.same.grp_months, polygon(c(rev(0:(length(same.host.same.grp_months$lags_months)-1)), 0:(length(same.host.same.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#dfc27d",0.9), border=FALSE))
+points(x=same.host.same.grp_months$lags_months,y=same.host.same.grp_months$rho_mean, col=alpha("#bf822c",1), cex=0.5, pch=19)
+points(same.host.same.grp_months$lags_months, same.host.same.grp_months_ma, col="#8c510a", type="l", lwd=1)
+
+# Different host same group
+with(different.host.same.grp_months, polygon(c(rev(0:(length(different.host.same.grp_months$lags_months)-1)), 0:(length(different.host.same.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#c5ede3",0.9), border = FALSE))
+points(x=different.host.same.grp_months$lags_months,y=different.host.same.grp_months$rho_mean, col=alpha("#9ad5c8",1), cex=0.5, pch=19)
+points(different.host.same.grp_months$lags_months, different.host.same.grp_months_ma, col="#2ca25f", type="l", lwd=1)
+
+# Different host different group
+with(different.host.different.grp_months, polygon(c(rev(0:(length(different.host.different.grp_months$lags_months)-1)), 0:(length(different.host.different.grp_months$lags_months)-1)), c(rev(lower_ci), upper_ci), col=alpha("#f2897e",0.9), border = FALSE))
+points(x=different.host.different.grp_months$lags_months,y=different.host.different.grp_months$rho_mean, col=alpha("#fdbb84",1), cex=0.5, pch=19)
+points(different.host.different.grp_months$lags_months, different.host.different.grp_months_ma, col="#e34a33", type="l", lwd=1)
+axis(side=1, seq(0,112, by=12))
+```
+
