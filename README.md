@@ -34,7 +34,7 @@ clr_pca <- function(ftbl) {
 
 #### Analyses
 
-Below you can find a brief description of the analyses in each **R Notebook**
+Below you can find a brief description of the analyses in each **R Notebook:**
 
 * `hierarchical_smooths.Rmd:` code to reproduce plots showing dynamics (in terms of smooth functions) over time at the population, group and host level.
 
