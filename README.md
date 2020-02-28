@@ -23,6 +23,7 @@ To account for the compositional nature of 16S amplicon sequence data and differ
 The first three microbiome PCs you can find in the data.frame `metadata` are computed from the below `R` code.     
 
 ```
+pseudocount <- 0.65
 clr_pca <- function(ftbl) {
   dclr <- t(apply(t(ftbl)+pseudocount, 2, compositions::clr))
   pcx <- prcomp(dclr)
