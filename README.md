@@ -6,6 +6,7 @@ The analyzed data (i.e. the ASV table, metadata and taxonomy) is stored in a phy
 You can load this data in `R` by typing
 
 ```
+library(phyloseq)
 ps <- loadRDS("ps.RDS")
 ```
 
