@@ -33,6 +33,13 @@ clr_pca <- function(ftbl) {
 }
 ```
 
+### Microbiome features
+The `metadata` contain 6 different microbiome features. 
+* `PC1-PC3:` the first three PCs from clr-transformed realtive abundances (see above).
+* `richness; shannon; simpson:` alpha diversity indicies corresponding to the first three Hill numbers, i.e. Species richness, Shannon entropy and the inverse Simpson index.
+
+[NOTE LOG-RATIOS ARE IN DIFFERENT DATASET?]
+
 #### Covariates
 At the **population level**, `metadata` contain the columns `rain_monthly`, `rain_annual`, `tempmax_monthly` and `tempmax_annual` for total monthly and annual rainfall and maximum monthly and annual temperature. 
 
