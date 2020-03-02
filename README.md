@@ -1,6 +1,6 @@
-# Synchrony and idiosyncrasy in the gut microbiome of wild primates
+### Synchrony and idiosyncrasy in the gut microbiome of wild primates
 
-## Load data
+#### Load data
 The analyzed data (i.e. the ASV table, metadata and taxonomy) is stored in a phyloseq object.
 
 You can load this data in `R` by typing
@@ -18,7 +18,7 @@ metadata <- as(sample_data(ps), "data.frame")
 tax <- as(tax_table(ps2),"matrix")
 ```
 
-## Dealing with compositionality
+#### Dealing with compositionality
 To account for the compositional nature of 16S amplicon sequence data and differences in sequencing depth, we followed the recommendations of Gloor et al. (2017) and Morton et al. (2019) and used the centered log-ratio (clr) transforation (see also Pawlowsky-Glahn & Egozcue, 2006). An important property of the clr-transformation is scale invariance; this means that the same ratio is expected in two identical samples--one with a few reads, and one with many reads (Gloor et al. 2017). An important consequence of this property is that count normalization is unnecessary as it only leads to a loss of information and precision (Gloor et al. 2017; McMurdie & Holmes, 2014). Lastly, the Euclidean distance between clr-transformed samples--the Aitchison distance--has been shown to be superior to other commonly used distance metrics such as Bray-Curtis and Jensen-Shannon divergence when applied on compositional data (Martino et al. 2019; Aitchison et al. 2000). 
 
 The first three microbiome PCs (`PC1`, `PC2`, `PC3`) you can find in the data.frame `metadata` are computed from the below `R` code.     
@@ -33,7 +33,7 @@ clr_pca <- function(ftbl) {
 }
 ```
 
-### Microbiome features
+#### Microbiome features
 The `metadata` contain 6 different microbiome features. 
 * `PC1-PC3:` the first three PCs from clr-transformed realtive abundances (see above).
 * `richness; shannon; simpson:` alpha diversity indicies corresponding to the first three Hill numbers, i.e. Species richness, Shannon entropy and the inverse Simpson index.
