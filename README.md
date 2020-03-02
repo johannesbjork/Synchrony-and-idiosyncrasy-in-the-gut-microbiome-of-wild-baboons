@@ -38,7 +38,7 @@ Below you can find a brief description of the analyses in each **R Notebook:**
 
 * `hierarchical_smooths.Rmd:` code to reproduce plots showing dynamics (in terms of smooth functions) over time at the population, group and host level.
 
-* `taxa_balances.Rmd:` code to reproduce plots showing log-ratios (also called balances) of the most abundant phyla and families plotted over time. **[STILL HAVE TO DO!]**
+* `taxa_balances.Rmd:` code to reproduce plots showing log-ratios (also called balances) of the most abundant phyla and families plotted over time. **[STILL HAVE TO UPLOAD!]**
 
 * `time_decay.Rmd:` code to reproduce plots showing time-decay in community similarity for samples from (1) the same host in the same group; (2) different hosts in the same group; and (3) different hosts in different groups.    
 
