@@ -15,7 +15,7 @@ If you want to side step phyloseq specific `R` code and work directly on the dat
 ```
 ftbl <- as(otu_table(ps),"matrix") 
 metadata <- as(sample_data(ps), "data.frame")
-tax <- as(tax_table(ps2),"matrix")
+tax <- as(tax_table(ps),"matrix")
 ```
 
 #### Dealing with compositionality
