@@ -1,0 +1,540 @@
+---
+title: "Aitchison PCA"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(phyloseq)
+library(compositions)
+library(tidyverse)
+library(patchwork)
+library(ggExtra)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(mgcv)
+library(RColorBrewer)
+```
+
+In this RMarkdown file, we reproduce all plots stemming from the Aitchison PCA analysis, i.e. Fig. S3; S4; S10; 3D; and S12
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Read-in data
+ps <- readRDS("ps.RDS")
+feature_table <- as(otu_table(ps),"matrix")
+```
+
+```{r, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Aitchison PCA = PCA on clr-transformed relative abundances
+pseudocount <- 0.65 # for clr-transformation
+clr_abund <- compositions::clr(as(otu_table(ps),"matrix")+pseudocount) # assumes samples are rows
+pca_abund <- prcomp(clr_abund) # PCA
+
+# Compute variance explained by each PC
+pc1_var <- paste0("PC1 ", "(",round((sum(pca_abund$sdev[1]^2)/mvar(clr_abund))*100,1),"%",")")
+pc2_var <- paste0("PC2 ", "(",round((sum(pca_abund$sdev[2]^2)/mvar(clr_abund))*100,1),"%",")")
+pc3_var <- paste0("PC3 ", "(",round((sum(pca_abund$sdev[3]^2)/mvar(clr_abund))*100,1),"%",")")
+```
+
+```{r, Fig. S3, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Plot the Aitchison PCA
+cols_season <- c("#f6e8c3","#7fbf7b")
+cols_season <- cols_season[factor(as(sample_data(ps),"data.frame")$season)]
+
+p1a <-
+  data.frame(pca_abund$x) %>% 
+  rownames_to_column("sample_id") %>% 
+  left_join(select(as(sample_data(ps), "data.frame"), sample_id, season), by="sample_id") %>% 
+  ggplot(aes(x=PC1, y=PC2, color=season)) + 
+  geom_point() +
+  scale_color_manual(values=c("Dry"="#f6e8c3","Wet"="#7fbf7b")) +
+  theme(legend.position="none",
+        panel.grid.major=element_blank(), 
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(), 
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  labs(x=pc1_var, y=pc2_var)
+
+# default: type="density"
+p1b <- ggMarginal(p1a, type="density", groupColour=T, groupFill=T)
+
+p2a <-
+  data.frame(pca_abund$x) %>% 
+  rownames_to_column("sample_id") %>% 
+  left_join(select(as(sample_data(ps), "data.frame"), sample_id, season), by="sample_id") %>% 
+  ggplot(aes(x=PC1, y=PC3, color=season)) + 
+  geom_point() +
+  scale_color_manual(values=c("Dry"="#f6e8c3","Wet"="#7fbf7b")) +
+  theme(legend.position="none",
+        panel.grid.major=element_blank(), 
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(), 
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  labs(x=pc1_var, y=pc3_var)
+
+# default: type="density"
+p2b <- ggMarginal(p2a, type="density", groupColour=T, groupFill=T)
+
+p3a <-
+  data.frame(pca_abund$x) %>% 
+  rownames_to_column("sample_id") %>% 
+  left_join(select(as(sample_data(ps), "data.frame"), sample_id, season), by="sample_id") %>% 
+  ggplot(aes(x=PC2, y=PC3, color=season)) + 
+  geom_point() +
+  scale_color_manual(values=c("Dry"="#f6e8c3","Wet"="#7fbf7b")) +
+  theme(legend.position="none",
+        panel.grid.major=element_blank(), 
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(), 
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  labs(x=pc2_var, y=pc3_var)
+
+# default: type="density"
+p3b <- ggMarginal(p3a, type="density", groupColour=T, groupFill=T)
+
+ggarrange(p1b ,p2b, p3b, ncol=3, nrow=2)
+```
+
+```{r, Fig. S4, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Average PCs for samples from the same host in the same group collected the same date
+metadata <- 
+  as(sample_data(ps), "data.frame") %>% 
+  left_join((data.frame(pca_abund$x[,1:3]) %>% rownames_to_column("sample_id")), by="sample_id") 
+
+  # mutate(idx=as.integer(factor(paste0(collection_date,"_",host,"_",grp)))) %>% 
+  # group_by(idx) %>% 
+  # mutate(PC1=mean(PC1),
+  #        PC2=mean(PC2),
+  #        PC3=mean(PC3)) %>% 
+  # distinct(idx, .keep_all=T) %>% 
+  # ungroup() %>% 
+  # mutate(collection_date=as.Date(collection_date,format="%Y-%m-%d"))
+
+######## Code for yellow and green background panels
+
+# Redefine start and end of season based on rain_monthly: if >=1mm, we (re-)define it as wet season
+# Below we fill-in missing collection and manually re-code season to wet if >=1mm rain in a particular month
+
+# This is the rain data that we have gone thru manually
+# for(hy in paste0(2000:2012, ":", 2001:2013)) {
+# p <- as(sample_data(ps),"data.frame") %>% 
+#     filter(hydro_year %in% str_split(hy,":",simplify=T)[,1]:str_split(hy,":",simplify=T)[,2]) %>% 
+#     distinct(month, .keep_all=T) %>% 
+#     select(collection_date, hydro_year, month, season, rain_monthly)
+# print(p)
+# }
+
+metadata_time_pad <- metadata %>% 
+  padr::pad(by="collection_date") %>% 
+  mutate(time=as.integer(factor(collection_date)),
+         month=factor(months(collection_date, abbreviate=T), levels=c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct")),
+         hydro_year=case_when(lubridate::month(collection_date) < 11 ~ lubridate::year(collection_date), lubridate::month(collection_date) >=11 ~ lubridate::year(collection_date)+1),
+         season=case_when(lubridate::month(collection_date) %in% c(11,12,1,2,3,4,5) ~ "Wet",
+                          lubridate::month(collection_date) %in% 6:10 ~ "Dry")) %>% 
+  
+  # Below we manually re-code season to wet if it rained >=1mm in a particular month
+  mutate(year_month=paste0(format(collection_date, "%Y"), "_", format(collection_date, "%b"))) %>% 
+  mutate(season=if_else(year_month == "2000_Apr", replace(x=season, values="Dry"), season)) %>%
+  mutate(season=if_else(year_month == "2000_May", replace(x=season, values="Dry"), season)) %>%
+  mutate(season=if_else(year_month == "2002_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2004_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2005_Jun", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2005_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2006_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2007_Aug", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2007_Sep", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2007_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2008_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2009_Jun", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2010_Jun", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2010_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2011_Oct", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2012_Jun", replace(x=season, values="Wet"), season)) %>%
+  mutate(season=if_else(year_month == "2012_Oct", replace(x=season, values="Wet"), season)) %>% 
+  ungroup() %>% 
+  mutate(hydro_year=if_else(year_month == "2002_Oct", replace(x=hydro_year, values=2003), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2004_Oct", replace(x=hydro_year, values=2005), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2005_Oct", replace(x=hydro_year, values=2006), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2006_Oct", replace(x=hydro_year, values=2007), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2007_Aug", replace(x=hydro_year, values=2008), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2007_Sep", replace(x=hydro_year, values=2008), hydro_year)) %>%
+  mutate(hydro_year=if_else(year_month == "2007_Oct", replace(x=hydro_year, values=2008), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2008_Oct", replace(x=hydro_year, values=2009), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2010_Oct", replace(x=hydro_year, values=2011), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2011_Oct", replace(x=hydro_year, values=2012), hydro_year)) %>% 
+  mutate(hydro_year=if_else(year_month == "2012_Oct", replace(x=hydro_year, values=2013), hydro_year)) 
+
+########
+
+PC_smooths <- vector("list", 3)
+names(PC_smooths) <- c("PC1","PC2","PC3")
+
+# Code to estimate smooths with 95% simultaneous confidence interval
+rmvn <- function(n, mu, sig) { ## MVN random deviates
+  L <- mroot(sig)
+  m <- ncol(L)
+  t(mu + L %*% matrix(rnorm(m*n), m, n))
+}
+
+for(PC in c("PC1","PC2","PC3")) {
+  #print(PC)
+  f <- reformulate(response=PC, termlabels="s(time, k=65)")
+  m <- mgcv::bam(f, data=metadata_time_pad[,c("time",PC)]) #metadata_time_pad[,c(PC,"time")])
+  
+  # For 95% simultaneous confidence interval
+  Vb <- vcov(m)
+  newd <- metadata_time_pad[,c("time",PC)]
+  pred <- predict(m, newd, se.fit=TRUE)
+  se.fit <- pred$se.fit
+  N <- 10000
+  BUdiff <- rmvn(N, mu = rep(0, nrow(Vb)), sig = Vb)
+  Cg <- predict(m, newd, type = "lpmatrix")
+  simDev <- Cg %*% t(BUdiff)
+  absDev <- abs(sweep(simDev, 1, se.fit, FUN = "/"))
+  masd <- apply(absDev, 2L, max)
+  crit <- quantile(masd, prob = 0.95, type = 8)
+  pred <- transform(cbind(data.frame(pred), newd),
+                    uprS = fit + (crit * se.fit),
+                    lwrS = fit - (crit * se.fit))
+  pred$variable <- PC
+  colnames(pred)[4] <- "PC"
+  PC_smooths[[PC]] <- pred
+}
+
+PC_smooths_df <- PC_smooths %>% bind_rows()
+
+# Season panels need to be adjusted for rainfall
+rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(unique(metadata_time_pad$hydro_year), each=2)),
+                               data.frame(season=c("Wet","Dry"), stringsAsFactors=F),
+                               data.frame(xmin=NA),
+                               data.frame(xmax=NA),
+                               data.frame(ymin=-Inf),
+                               data.frame(ymax=Inf))
+
+for(n in 1:nrow(rect_idx_season_pad)) {
+  rect_idx_season_pad$xmin[n] <- min(metadata_time_pad[metadata_time_pad$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_time_pad$season %in% rect_idx_season_pad$season[n],]$time)
+  rect_idx_season_pad$xmax[n] <- max(metadata_time_pad[metadata_time_pad$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_time_pad$season %in% rect_idx_season_pad$season[n],]$time)
+}
+rect_idx_season_pad <- rect_idx_season_pad[-1,]
+x_breaks_season_pad <- rect_idx_season_pad %>% group_by(hydro_year) %>% summarise(min=min(xmin),max=max(xmax))
+
+figS4 <- PC_smooths_df %>% 
+  ggplot(aes(x=time)) + 
+  geom_point(aes(y=PC)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  geom_ribbon(aes(ymin=lwrS, ymax=uprS), fill="gray") +
+  geom_line(aes(y=fit, x=time), size=1, color="black") +
+  scale_fill_manual(values=c(setNames(c("#f6e8c3","#7fbf7b"), c("Dry","Wet")))) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0, 0)) +  
+  theme(legend.position = "none",
+        panel.grid.major=element_blank(), 
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(), 
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text.x=element_text(size=12, angle=45, hjust=0.95, color="black"),
+        axis.text.y=element_text(size=12,color="black"),
+        axis.title=element_text(size=15,color="black"),
+        strip.background=element_blank(),
+        strip.text=element_text(size=12,color="black")) +
+  guides(color=guide_legend(ncol=1)) +
+  labs(x="Hydrological year", y="Microbiome PCs") +
+  facet_wrap(vars(variable), nrow=3) +
+  geom_hline(yintercept=0, color="black",linetype="dashed")
+
+figS4
+```
+
+```{r, Fig. S10, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Select the 5 host with the most samples in each season and hydrological year
+hosts_selection <- as(sample_data(ps), "data.frame") %>%
+  mutate(host=as.character(host)) %>%
+  group_by(hydro_year, season, host) %>%
+  summarise(n=n()) %>% 
+  slice_max(order_by=n, n=5) %>% 
+  ungroup()
+
+# Join metadata to the PCA data.frame  
+pca_dat <- 
+  data.frame(pca_abund$x) %>% 
+  rownames_to_column("sample_id") %>% 
+  left_join(select(as(sample_data(ps),"data.frame"), sample_id, hydro_year, host, season), by="sample_id") %>% 
+  drop_na() %>% 
+  mutate(host=as.character(host),
+         hydro_year=as.character(hydro_year),
+         season=as.character(season))
+
+# Lists of length season*hydrological years 
+hy_s_host <- vector("list", length(as.character(2001:2013))*2)
+names(hy_s_host) <- sort(c(paste0(as.character(2001:2013),"_Dry"),paste0(as.character(2001:2013),"_Wet")))
+
+plot_ls <- vector("list", length(as.character(2001:2013)))
+names(plot_ls) <- as.character(2001:2013)
+
+# Host colors to choose from 
+# Colors for hosts are perserved within the same hydrological year
+colors = grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)]
+
+for(hy in as.character(2001:2013)) {
+  for(s in c("Dry","Wet")) {
+    hy_s <- paste0(hy,"_",s)
+    hosts <- hosts_selection[hosts_selection$hydro_year==hy & hosts_selection$season==s,]$host
+    
+    hosts_cols <- data.frame(host=hosts, cols=sample(colors, length(unique(hosts))))
+    pcx <- pca_dat[pca_dat$hydro_year==hy & pca_dat$season==s & pca_dat$host %in% hosts,] %>% 
+      left_join(hosts_cols, by="host")
+    
+    hy_s_host[[hy_s]] <- pcx
+  }
+  
+  dat <- bind_rows(c(hy_s_host[grep(x=names(hy_s_host), pattern=hy, value=T)[[1]]], 
+              hy_s_host[grep(x=names(hy_s_host), pattern=hy, value=T)[[2]]]),
+            .id="window")
+  plot_ls[[hy]] <- 
+    dat %>%  
+    ggplot(aes(x=PC1, y=PC2)) + 
+    geom_point(aes(fill=host), size=2, pch=21, color="black") +
+    facet_wrap(vars(window)) +
+    scale_fill_manual(values=dat$cols) +
+    theme(legend.position="none",
+          strip.text.x=element_text(size=12, colour="black"),
+          strip.background=element_rect(fill="white"),
+          panel.grid.major=element_blank(), 
+          panel.grid.minor=element_blank(),
+          panel.background=element_blank(), 
+          panel.border=element_rect(colour="black", fill=NA, size=1),
+          axis.ticks=element_line(color="black"),
+          axis.ticks.length=unit(0.15,"cm"), 
+          axis.text=element_text(size=10,color="black"),
+          axis.title=element_text(size=12,color="black")) +
+    labs(x=pc1_var, y=pc2_var)
+}
+
+# Fig. S10
+#patchwork::wrap_plots(plot_ls, ncol=2)
+ggpubr::ggarrange(plotlist=plot_ls)
+```
+
+```{r, Fig. 3D, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Find hosts with co-occurring samples in the same month
+
+# Try different periods
+# In the manuscript, we show 2008-2009 in Fig. 3D and 2007-2008 in Fig. S13
+fromY <- "2008"
+toY <- "2009"
+
+focal_year <- as(sample_data(ps), "data.frame") %>% 
+  mutate(month=factor(months(collection_date, abbreviate=T), levels=c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct")),
+         season=factor(season),
+         host=as.character(host)) %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"),
+         collection_date >= "2002-01-01",
+         collection_date < "2010-01-01") %>%
+  group_by(host, hydro_year, month) %>% 
+  tally() %>% 
+  arrange(hydro_year, month) %>% 
+  ungroup() %>% 
+  group_by(hydro_year, month) %>% 
+  summarise( n_host=n(), host_list=list(host) ) %>% 
+  filter((hydro_year==fromY & month %in% c("Nov","Dec")) | (hydro_year==toY & month %in% c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct")))
+
+table(Reduce(c,focal_year$host_list))[table(Reduce(c,focal_year$host_list))>=10]
+select_host <- names(table(Reduce(c,focal_year$host_list))[table(Reduce(c,focal_year$host_list))>=10])
+
+metadata_select_host <- as(sample_data(ps), "data.frame") %>% filter((hydro_year==fromY & month %in% c("Nov","Dec")) | (hydro_year==toY & month %in% c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"))) %>%
+  filter(host %in% select_host) %>%
+  mutate(host=as.character(host)) %>% 
+  left_join((data.frame(pca_abund$x[,1:3]) %>% rownames_to_column("sample_id")), by="sample_id") 
+
+select_host_list <- vector("list", length(select_host))
+names(select_host_list) <- select_host
+for(host in select_host) {
+  focal_meta <- metadata_select_host[metadata_select_host$host==host,]
+  focal_meta <- focal_meta %>% 
+    select(month, hydro_year, PC1, PC2, PC3) %>% 
+    group_by(month) %>% 
+    summarise(PC1=mean(PC1),
+              PC2=mean(PC2),
+              PC3=mean(PC3)) %>% 
+    ungroup()
+  
+  chunks <- data.frame(month=c("Nov","Dec","Dec","Jan","Jan","Feb","Feb","Mar","Mar","Apr","Apr","May","May","Jun","Jun","Jul","Jul","Aug","Aug","Sep","Sep","Oct"),
+                       month_int=c(1,rep(2:11, each=2),12),
+                       window=rep(1:11, each=2))
+  
+  focal_chunks <- chunks %>% 
+    left_join(select(focal_meta, month, PC1, PC2, PC3), by="month")
+  
+  focal_chunks$type <- NA
+  for(w in unique(focal_chunks$window)) {
+    if( (TRUE %in% is.na(focal_chunks[focal_chunks$window %in% w,]$PC1)) == TRUE ){
+      focal_chunks[focal_chunks$window %in% w,]$type <- "B"
+    }else{
+      focal_chunks[focal_chunks$window %in% w,]$type <- "A"
+    }
+  }
+
+  focal_chunks$hys <- paste(unique(metadata_select_host$hydro_year),collapse=" | ")
+  select_host_list[[host]] <- focal_chunks
+}
+  
+library(RColorBrewer)
+n <- length(select_host_list)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+cols <- sample(col_vector, n)
+color_by_host <- setNames(cols,names(select_host_list))
+
+p1 <- select_host_list %>% 
+  bind_rows(.id="host") %>% 
+  arrange(window, host) %>% 
+  mutate(month=fct_relevel(month, c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"))) %>%
+  ggplot(aes(x=month, y=PC1, group=interaction(host, window))) +
+  geom_line(aes(color=host), size=0.8) + 
+  geom_point(aes(color=host)) +
+  scale_linetype_manual(values=c("solid","dashed")) +
+  scale_color_manual(values=color_by_host) +
+  theme(
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(),
+        legend.background=element_blank(),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  scale_x_discrete(expand=expansion(mult=c(0.01,0.01), add=c(0,0))) +
+  xlab(NULL) +
+  labs(title=str_replace((select_host_list %>% bind_rows(.id="host") %>% pull(hys) %>% unique()), " \\| ", "\\-"))
+
+p2 <- select_host_list %>% 
+  bind_rows(.id="host") %>% 
+  arrange(window, host) %>% 
+  mutate(month=fct_relevel(month, c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"))) %>%
+  ggplot(aes(x=month, y=PC2, group=interaction(host, window))) +
+  geom_line(aes(color=host), size=0.8) + 
+  geom_point(aes(color=host)) +
+  scale_linetype_manual(values=c("solid","dashed"), guide='none') +
+  scale_color_manual(values=color_by_host) +
+  theme(
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(),
+        legend.background=element_blank(),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  scale_x_discrete(expand=expansion(mult=c(0.01,0.01), add=c(0,0))) +
+  xlab(NULL)
+
+p3 <- select_host_list %>% 
+  bind_rows(.id="host") %>% 
+  arrange(window, host) %>% 
+  mutate(month=fct_relevel(month, c("Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"))) %>%
+  ggplot(aes(x=month, y=PC3, group=interaction(host, window))) +
+  geom_line(aes(color=host), size=0.8) + 
+  geom_point(aes(color=host)) +
+  scale_linetype_manual(values=c("solid","dashed")) +
+  scale_color_manual(values=color_by_host) +
+  theme(
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_blank(),
+        legend.background=element_blank(),
+        axis.ticks=element_line(color="black"),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=10,color="black"),
+        axis.title=element_text(size=12,color="black")) +
+  scale_x_discrete(expand=expansion(mult=c(0.01,0.01), add=c(0,0))) +
+  xlab("Month")
+
+# Fig. 3D
+p1 + p2 + p3 + plot_layout(nrow=3, guides="collect")
+```
+
+```{r, Fig. S12, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
+# Here we prepare the data so we can plot each hosts samples in the PCA (PC1 vs PC2) as trajectories with directional arrows between samples 
+
+plot_ls <- vector("list", length(names(select_host_list)))
+names(plot_ls) <- names(select_host_list)
+
+for(baboon in names(select_host_list)) {
+
+  focal_host_metadata <- select_host_list %>% 
+    bind_rows(.id="host") %>% 
+    filter(host %in% baboon) %>% 
+    mutate(month_label=paste0(month_int,": ",month)) %>% 
+    left_join((as(sample_data(ps), "data.frame") %>% select(month, season) %>% distinct(month, .keep_all=T)), by="month")
+  
+  trajectory_df <- select_host_list %>% 
+    bind_rows(.id="host") %>% 
+    filter(host %in% baboon) %>% 
+    group_by(grp = str_c('Column', rep(1:2, length.out = n()))) %>% 
+    ungroup %>%
+    pivot_wider(names_from = grp, values_from = c(month, PC1, PC2)) %>% 
+    mutate(month_Column1=ifelse(is.na(month_Column1), zoo::na.locf(month_Column1, fromLast=T), month_Column1),
+           month_Column2=ifelse(is.na(month_Column2), zoo::na.locf(month_Column2, fromLast=T), month_Column2),
+           PC1_Column1=ifelse(is.na(PC1_Column1), zoo::na.locf(PC1_Column1, fromLast=T), PC1_Column1),
+           PC1_Column2=ifelse(is.na(PC1_Column2), zoo::na.locf(PC1_Column2, fromLast=T), PC1_Column2),
+           PC2_Column1=ifelse(is.na(PC2_Column1), zoo::na.locf(PC2_Column1, fromLast=T), PC2_Column1),
+           PC2_Column2=ifelse(is.na(PC2_Column2), zoo::na.locf(PC2_Column2, fromLast=T), PC2_Column2)) %>% 
+    filter(!month_Column1==month_Column2) %>%  
+    
+    mutate(PC1_Column1=ifelse(month_Column1 %in% unique(focal_host_metadata[is.na(focal_host_metadata$PC1),]$month), NA, PC1_Column1),
+           PC1_Column2=ifelse(month_Column2 %in% unique(focal_host_metadata[is.na(focal_host_metadata$PC1),]$month), NA, PC1_Column2),
+           PC2_Column1=ifelse(month_Column1 %in% unique(focal_host_metadata[is.na(focal_host_metadata$PC2),]$month), NA, PC2_Column1),
+           PC2_Column2=ifelse(month_Column2 %in% unique(focal_host_metadata[is.na(focal_host_metadata$PC2),]$month), NA, PC2_Column2),
+           
+           month_Column1=ifelse(month_int==12, "Oct", month_Column1),
+           month_Column2=ifelse(month_int==12, "Nov", month_Column2),
+           PC1_Column1=ifelse(month_int==12, PC1_Column2, PC1_Column1),
+           PC2_Column1=ifelse(month_int==12, PC2_Column2, PC2_Column1),
+           PC1_Column2=ifelse(month_int==12, PC1_Column1[1], PC1_Column2),
+           PC2_Column2=ifelse(month_int==12, NA, PC2_Column2))
+    
+  p <- trajectory_df %>% 
+  ggplot() +
+    geom_point(data=focal_host_metadata, aes(x=PC1, y=PC2, color=season), size=3) +
+    geom_curve(aes(x=PC1_Column1, y=PC2_Column1, xend=PC1_Column2, yend=PC2_Column2), 
+               curvature=-0.2, arrow=arrow(length=unit(0.03, "npc")), color="gray") +
+    geom_text(data=focal_host_metadata, aes(x=PC1, y=PC2, label=month_label), nudge_x=0.2, nudge_y=1, vjust="inward",hjust="inward") +
+    labs(title=baboon, x="PC1", y="PC2") +
+    theme(legend.position="none",
+          panel.border=element_rect(colour="black", fill=NA, size=0.5),
+          panel.grid.major=element_blank(), 
+          panel.grid.minor=element_blank(),
+          panel.background=element_blank(), 
+          axis.ticks=element_line(color="black"),
+          axis.ticks.length=unit(0.15,"cm"), 
+          axis.text.x=element_text(size=12, color="black"),
+          axis.text.y=element_text(size=12,color="black"),
+          axis.title=element_text(size=12,color="black"),
+          strip.background=element_blank(),
+          strip.text=element_text(size=12,color="black"),
+          plot.margin=unit(c(0.1,0.5,0.1,0.5),"cm")) +
+    guides(color=guide_legend(ncol=1)) +
+    scale_color_manual(values=c("Wet"="#7fbf7b","Dry"="#f6e8c3")) +
+    scale_x_continuous(expand=c(.1,.1))
+    #scale_y_continuous(limits=c(-35,35))
+  
+  plot_ls[[baboon]] <- p
+}
+
+# Fig. S12
+#gridExtra::grid.arrange(grobs=plot_ls, ncol=4, top=textGrob(labs(title=str_replace((select_host_list %>% bind_rows(.id="host") %>% pull(hys) %>% unique()), " \\| ", "\\-")), gp=gpar(fontsize=15,font=1)))
+ggpubr::ggarrange(plotlist=plot_ls)
+```
