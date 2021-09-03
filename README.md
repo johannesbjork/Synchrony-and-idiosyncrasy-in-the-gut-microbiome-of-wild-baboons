@@ -1,5 +1,8 @@
 ### Synchrony and idiosyncrasy in the gut microbiome of wild primates
 
+
+### WILL UPDATE THE BELOW (ITS OLD)
+
 #### Load data
 The analyzed data (i.e. the ASV table, metadata and taxonomy) is stored in a phyloseq object.
 
