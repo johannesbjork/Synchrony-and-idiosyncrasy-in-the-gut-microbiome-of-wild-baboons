@@ -1,0 +1,1134 @@
+---
+title: "Taxon log-ratio analysis"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(phyloseq)
+library(compositions)
+library(tidyverse)
+library(patchwork)
+library(RColorBrewer)
+library(nlme)
+library(rr2)
+```
+
+In this RMarkdown file, we reproduce all plots with log-ratios defined as a focal taxon's average clr-transformed relative abundance in a host or social group compared to its average clr-transformed relative abundance in the whole host population. Positive log-ratio values mean that the focal taxon exhibits, on average, above-average relative abundances in the focal host or social group compared to the host population at large, and vice versa. Log-ratio values close to 0 mean that the focal taxon has, on average, relative abundance in the focal host or social group that is on par with its abundance in the host population at large. 
+
+The figures are Fig. 3E and fig. S14; fig. S15; and fig. S20 and S21
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Fig. 3E and fig. S14
+
+# Prepare data for phylum level log-ratios
+
+# Read-in and agglomerate data
+ps <- readRDS("ps.RDS") %>% 
+  tax_glom("phylum")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$phylum
+
+# Filter metadata to the best-sampled animals
+# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2)
+metadata_filtered <- as(sample_data(ps), "data.frame") %>%
+    select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
+    group_by(host) %>% 
+    mutate(host=as.character(host),
+           grp=as.character(grp),
+           n_samples=n()) %>% 
+    ungroup() %>% 
+    arrange(desc(n_samples)) %>% 
+    filter(n_samples >= 75,
+           collection_date >= "2002-01-01",
+           collection_date < "2010-01-01")
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),
+                       data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+
+pseudocount <- 0.65 # for clr-transformation
+ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Fig. 3E and fig. S14
+
+# Taxon log-ratios aggregated over time (Fig. 3E)
+
+features <- data.frame(feature=colnames(ftbl_avg_clr))
+log_ratios_host_phy <- vector("list", length(unique(metadata_filtered$host)))
+names(log_ratios_host_phy) <- unique(metadata_filtered$host)
+log_ratios_host_phy <- lapply(log_ratios_host_phy, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA, taxon_level="phylum"))
+
+std <- function(x) sd(x)/sqrt(length(x))
+
+for(host in unique(metadata_filtered$host)) {
+  
+  focal_metadata <- metadata_avg[metadata_avg$host %in% host,][,c("sample_id","host","collection_date")]
+  
+  for(row in 1:nrow(features)) {
+    log_ratios_host_phy[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    
+    log_ratios_host_phy[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+
+  }
+}
+
+
+# Taxon log-ratios for each season and hydrological year (fig. S14)
+
+year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- gsub(year_season, pattern="a", replacement="")
+year_season <- gsub(year_season, pattern="b", replacement="")
+
+year_season_hosts <- crossing(year_season, hosts=gtools::mixedsort(unique(as.character(metadata_filtered$host))))
+
+log_ratios_year_season_host_phy <- vector("list", nrow(year_season_hosts))
+names(log_ratios_year_season_host_phy) <- paste0(year_season_hosts$year_season,"_",year_season_hosts$hosts)
+log_ratios_year_season_host_phy <- lapply(log_ratios_year_season_host_phy, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA))
+
+for(year_season_host in names(log_ratios_year_season_host_phy)) {
+  focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_host, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_host, "\\_", simplify=T)[,2] & metadata_avg$host %in% paste(str_split(year_season_host, "\\_", simplify=T)[,3:4], collapse="_"),][,c("sample_id","host","collection_date","hydro_year","season")]
+  
+  for(row in 1:nrow(features)) {
+    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+
+    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr[,features$feature[row]])
+  }
+}
+```
+
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Fig. 3E and fig. S14
+
+# Prepare data for family level log-ratios
+
+# Read-in and agglomerate data
+ps <- readRDS("ps.RDS") %>% 
+  tax_glom("family")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$family
+
+# Filter metadata to the best-sampled animals
+# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2) 
+metadata_filtered <- as(sample_data(ps), "data.frame") %>%
+    select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
+    group_by(host) %>% 
+    mutate(host=as.character(host),
+           grp=as.character(grp),
+           n_samples=n()) %>% 
+    ungroup() %>% 
+    arrange(desc(n_samples)) %>% 
+    filter(n_samples >= 75,
+           collection_date >= "2002-01-01",
+           collection_date < "2010-01-01")
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),
+                       data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+
+pseudocount <- 0.65 # for clr-transformation
+ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Fig. 3E and fig. S14
+
+# Taxon log-ratios aggregated over time (Fig. 3E)
+
+features <- data.frame(feature=colnames(ftbl_avg_clr))
+log_ratios_host_fam <- vector("list", length(unique(metadata_filtered$host)))
+names(log_ratios_host_fam) <- unique(metadata_filtered$host)
+log_ratios_host_fam <- lapply(log_ratios_host_fam, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA, taxon_level="family"))
+
+std <- function(x) sd(x)/sqrt(length(x))
+
+for(host in unique(metadata_filtered$host)) {
+  
+  focal_metadata <- metadata_avg[metadata_avg$host %in% host,][,c("sample_id","host","collection_date")]
+  
+  for(row in 1:nrow(features)) {
+    log_ratios_host_fam[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    
+    log_ratios_host_fam[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+
+
+# Taxon log-ratios for each season and hydrological year (fig. S14)
+
+year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- gsub(year_season, pattern="a", replacement="")
+year_season <- gsub(year_season, pattern="b", replacement="")
+
+year_season_hosts <- crossing(year_season, hosts=gtools::mixedsort(unique(as.character(metadata_filtered$host))))
+
+log_ratios_year_season_host_fam <- vector("list", nrow(year_season_hosts))
+names(log_ratios_year_season_host_fam) <- paste0(year_season_hosts$year_season,"_",year_season_hosts$hosts)
+log_ratios_year_season_host_fam <- lapply(log_ratios_year_season_host_fam, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA))
+
+for(year_season_host in names(log_ratios_year_season_host_fam)) {
+  focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_host, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_host, "\\_", simplify=T)[,2] & metadata_avg$host %in% paste(str_split(year_season_host, "\\_", simplify=T)[,3:4], collapse="_"),][,c("sample_id","host","collection_date","hydro_year","season")]
+ 
+   for(row in 1:nrow(features)) {
+    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    
+    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+```
+
+```{r, Fig. 3E, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Plot Fig. 3E
+ 
+# Taxon log-ratios aggregated over time
+combine <- bind_rows(
+  (log_ratios_host_fam %>% 
+     bind_rows(.id="host") %>% 
+     group_by(feature) %>% 
+     mutate(maxLR=max(abs(log_ratio))) %>% 
+     ungroup() %>% 
+     mutate(feature=fct_reorder(feature, maxLR, max))),
+  (log_ratios_host_phy %>% 
+     bind_rows(.id="host") %>% 
+     group_by(feature) %>% 
+     mutate(maxLR=max(abs(log_ratio))) %>% 
+     ungroup() %>% 
+     mutate(feature=fct_reorder(feature, maxLR, max)))) 
+   
+combine %>%  
+  ggplot(aes(label=feature)) +
+  geom_rect(aes(xmin=as.numeric(feature) - 0.3, xmax=as.numeric(feature) + 0.3, ymin=0, ymax=abs(log_ratio), fill=taxon_level)) +
+  geom_point(aes(x=as.numeric(feature), y=abs(log_ratio), color=taxon_level), size=3) +
+  coord_flip() +
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        axis.title=element_text(size=16, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=14, color="black")) +
+  scale_fill_manual(values=c("family"="#69e2c5","phylum"="#85cce5")) +
+  scale_color_manual(values=c("family"="#06936e","phylum"="#128cad")) +
+  labs(x=NULL, y="Log fold change") + 
+  scale_x_continuous(label=levels(combine$feature), breaks=1:length(unique(combine$feature)), expand=c(0.01,0)) +
+  scale_y_continuous(expand=c(0.01,0))
+```
+```{r, fig. S14, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Plot fig. S14
+
+# Taxon log-ratios for each season and hydrological year
+metadata_filtered$hydro_year_season <- paste0(metadata_filtered$hydro_year,"_",metadata_filtered$season)
+metadata_filtered$idx <- as.integer(factor(metadata_filtered$hydro_year_season,levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")))
+rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(2002:2010, each=2)),
+                               data.frame(season=c("Wet","Dry"), stringsAsFactors=F),
+                               data.frame(xmin=NA),
+                               data.frame(xmax=NA),
+                               data.frame(ymin=-Inf),
+                               data.frame(ymax=Inf))
+rect_idx_season_pad <- rect_idx_season_pad[-nrow(rect_idx_season_pad),]
+
+for(n in 1:nrow(rect_idx_season_pad)) {
+  rect_idx_season_pad$xmin[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx)
+  rect_idx_season_pad$xmax[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx+1)
+}
+
+rect_idx_season_pad <- cbind(data.frame(hydro_year=rect_idx_season_pad$hydro_year),
+                             data.frame(season=rect_idx_season_pad$season),
+                             data.frame(xmin=rect_idx_season_pad$xmin),
+                             data.frame(xmax=rect_idx_season_pad$xmax),
+                             data.frame(ymin=rect_idx_season_pad$ymin),
+                             data.frame(ymax=rect_idx_season_pad$ymax))
+
+
+rect_idx_season_pad$xmin <- rect_idx_season_pad$xmin-1.5
+rect_idx_season_pad$xmax <- rect_idx_season_pad$xmax-1.5
+
+x_breaks_season_pad <- rect_idx_season_pad %>% group_by(hydro_year) %>% summarise(min=min(xmin),max=max(xmax))
+x_breaks_season_pad$min <- x_breaks_season_pad$min+0.5
+x_breaks_season_pad$max <- x_breaks_season_pad$max+0.5
+
+top_6_phy <- log_ratios_host_phy %>% 
+    bind_rows(.id="host") %>% 
+    group_by(feature) %>% 
+    mutate(maxLR=max(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, maxLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[1:6]
+
+bottom_6_phy <- log_ratios_host_phy %>% 
+    bind_rows(.id="host") %>% 
+    group_by(feature) %>% 
+    mutate(maxLR=max(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, maxLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[7:12]
+
+top_6_fam <- log_ratios_host_fam %>% 
+    bind_rows(.id="host") %>% 
+    group_by(feature) %>% 
+    mutate(maxLR=max(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, maxLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[1:6]
+
+bottom_6_fam <- log_ratios_host_fam %>% 
+    bind_rows(.id="host") %>% 
+    group_by(feature) %>% 
+    mutate(maxLR=max(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, maxLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[29:34]
+
+# Generate a random color palette for hosts
+n <- 56
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'div',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+cols <- sample(col_vector, n)
+# pie(rep(1,n), col=cols)
+host_cols <- setNames(cols,unique(metadata_filtered$host))
+
+p_top6_phy <- log_ratios_year_season_host_phy %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","host","id")) %>% 
+  mutate(host=paste0(host,"_",id),
+         feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         host=factor(host)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% top_6_phy) %>%
+  mutate(feature=factor(feature, levels=top_6_phy)) %>% 
+  ggplot(aes(x=idx, y=log_ratio, color=host)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=host)) +
+  geom_line(aes(group=host)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=host_cols) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-8, 8)) + 
+  labs(title="Top 6 phyla")
+
+p_bottom6_phy <- log_ratios_year_season_host_phy %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","host","id")) %>% 
+  mutate(host=paste0(host,"_",id),
+         feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         host=factor(host)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% bottom_6_phy) %>%
+  mutate(feature=factor(feature, levels=bottom_6_phy)) %>% 
+  ggplot(aes(x=idx, y=log_ratio, color=host)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=host)) +
+  geom_line(aes(group=host)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=host_cols) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-8, 8)) + 
+  labs(title="Bottom 6 phyla")
+
+p_top6_phy + p_bottom6_phy
+
+p_top6_fam <- log_ratios_year_season_host_fam %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","host","id")) %>% 
+  mutate(host=paste0(host,"_",id),
+         feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         host=factor(host)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% top_6_fam) %>%
+  mutate(feature=factor(feature, levels=top_6_fam)) %>% 
+  ggplot(aes(x=idx, y=log_ratio, color=host)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=host)) +
+  geom_line(aes(group=host)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=host_cols) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-6, 6)) + 
+  labs(title="Top 6 families")
+
+p_bottom6_fam <- log_ratios_year_season_host_fam %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","host","id")) %>% 
+  mutate(host=paste0(host,"_",id),
+         feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         host=factor(host)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% bottom_6_fam) %>%
+  mutate(feature=factor(feature, levels=bottom_6_fam)) %>% 
+  ggplot(aes(x=idx, y=log_ratio, color=host)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=host)) +
+  geom_line(aes(group=host)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=host_cols) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-6, 6)) + 
+  labs(title="Bottom 6 families")
+
+p_top6_fam + p_bottom6_fam
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S15
+
+# Prepare data for phylum level log-ratios
+
+ps <- readRDS("ps.RDS") %>% 
+  tax_glom("phylum")
+
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$phylum
+metadata <- as(sample_data(ps),"data.frame")
+
+# Average all samples belonging to the same host
+index <- as.integer(factor(metadata$host))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg_phy <- ceiling(ftbl_avg)
+
+# Use CLR values that do not correspond to the pseduocounts only  
+ftbl <- ftbl_avg_phy
+ftbl_closed <- compositions::acomp(ftbl) # samples are rows
+ftbl_closed <- ifelse(is.MAR(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_closed <- ifelse(is.MNAR(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_closed <- ifelse(is.BDL(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_avg_phy_clr <- compositions::clr(ftbl_closed)
+# below we NA original zeros
+tmp <- data.frame(which(ftbl==0,arr.ind = T))
+for(i in 1:nrow(tmp)) {
+  ftbl_avg_phy_clr[tmp[i,]$row,tmp[i,]$col] <- NA
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S15
+
+# Prepare data for family level log-ratios
+
+ps <- readRDS("ps.RDS") %>% 
+  tax_glom("family")
+
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$family
+metadata <- as(sample_data(ps),"data.frame")
+
+# Average all samples belonging to the same host
+index <- as.integer(factor(metadata$host))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg_fam <- ceiling(ftbl_avg)
+
+# Use CLR values that do not correspond to the pseduocounts only  
+ftbl <- ftbl_avg_fam
+ftbl_closed <- compositions::acomp(ftbl) # samples are rows
+ftbl_closed <- ifelse(is.MAR(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_closed <- ifelse(is.MNAR(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_closed <- ifelse(is.BDL(ftbl_closed)==T,NA,ftbl_closed)
+ftbl_avg_fam_clr <- compositions::clr(ftbl_closed)
+# below we NA original zeros
+tmp <- data.frame(which(ftbl==0,arr.ind = T))
+for(i in 1:nrow(tmp)) {
+  ftbl_avg_fam_clr[tmp[i,]$row,tmp[i,]$col] <- NA
+}
+```
+
+```{r, fig. S15, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S15
+
+avg_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
+std_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
+
+avg_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
+std_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
+
+p1 <- bind_rows(
+    (reshape2::melt(data.frame(ftbl_avg_phy_clr)) %>% 
+         na.omit() %>%
+         mutate(variable=as_factor(variable)) %>% 
+         group_by(variable) %>% 
+         mutate(taxon_level="Phylum",
+                std=sd(value),
+                avg=median(value)) %>% 
+         ungroup() %>% 
+         arrange(desc(avg), variable) %>% 
+         mutate(variable=factor(variable, rev(unique(variable))))),
+    (reshape2::melt(data.frame(ftbl_avg_fam_clr)) %>% 
+         na.omit() %>%
+         mutate(variable=as_factor(variable)) %>% 
+         group_by(variable) %>% 
+         mutate(taxon_level="Family",
+                std=sd(value),
+                avg=median(value)) %>% 
+         ungroup() %>% 
+         arrange(desc(avg), variable) %>% 
+         mutate(variable=factor(variable, rev(unique(variable)))))) %>% 
+    rename("Taxon"=1, "Log fold change"=2, "Taxon level"=3, "std"=4, "avg"=5) %>% 
+    ggplot(aes(x=Taxon, y=`Log fold change`, fill=`Taxon level`)) + 
+    geom_boxplot(outlier.colour=NA) +
+    scale_fill_manual(values=c("Phylum"="#85cce5","Family"="#69e2c5")) +
+    theme(panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank(),
+          panel.background=element_rect(fill="white"),
+          panel.border=element_rect(colour="black", fill=NA, size=1),
+          legend.key=element_blank(),
+          legend.title=element_text(size=14, color="black"),
+          legend.text=element_text(size=12, color="black"),
+          axis.ticks.length=unit(0.10,"cm"), 
+          axis.text.y=element_text(size=12, color="black"),
+          axis.text.x=element_text(size=10, color="black", angle=90, vjust=0.5, hjust=1),
+          axis.title=element_text(size=14, color="black"),
+          plot.title = element_text(hjust=0.5)) + 
+    geom_hline(yintercept=0, color="black", linetype="dashed") 
+
+
+combine_df <- bind_rows(
+    (reshape2::melt(data.frame(ftbl_avg_phy_clr)) %>% 
+         na.omit() %>%
+         mutate(variable=as_factor(variable)) %>% 
+         group_by(variable) %>% 
+         mutate(taxon_level="Phylum",
+                std=sd(value),
+                avg_median=median(value),
+                avg=mean(value),
+                cv=std/avg) %>% 
+         ungroup() %>% 
+         arrange(desc(avg), variable) %>% 
+         mutate(variable=factor(variable, rev(unique(variable))))),
+    (reshape2::melt(data.frame(ftbl_avg_fam_clr)) %>% 
+         na.omit() %>%
+         mutate(variable=as_factor(variable)) %>% 
+         group_by(variable) %>% 
+         mutate(taxon_level="Family",
+                std=sd(value),
+                avg_median=median(value),
+                avg=mean(value),
+                cv=std/avg) %>% 
+         ungroup() %>% 
+         arrange(desc(avg), variable) %>% 
+         mutate(variable=factor(variable, rev(unique(variable)))))) %>% 
+    rename("Taxon"=1, "Log fold change"=2, "Taxon level"=3, "std"=4, "avg_median"=5, "avg"=6, "cv"=7) %>% 
+    distinct(Taxon, .keep_all=T)  
+  
+m <- nlme::gls(std~avg, data=combine_df, correlation=nlme::corARMA(p=1))
+pred <- data.frame(std_pred = predict(m, combine_df), avg=combine_df$avg)
+
+p2 <- 
+  combine_df %>% 
+  ggplot(aes(x=avg, y=std, color=`Taxon level`)) +
+  geom_point(size=3) +
+  scale_color_manual(values=c("Phylum"="#85cce5","Family"="#69e2c5")) +
+  geom_line(size=1, color="black", data=pred, aes(x=avg, y=std_pred)) +
+  annotate("text", label=paste0("R^2 = ",round(R2(m)["R2_pred"][[1]],2),"; P = ", round(anova(m)[2,3],4)), x=-3, y=1.4, size=4.5) +
+  theme(legend.position="none",
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        legend.key=element_blank(),
+        legend.title=element_text(size=14, color="black"),
+        legend.text=element_text(size=12, color="black"),
+        axis.ticks.length=unit(0.10,"cm"), 
+        axis.text=element_text(size=12, color="black"),
+        axis.title=element_text(size=14, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  labs(x="Mean", y="Standard deviation")
+
+p1 + p2 + plot_layout(ncol=2, guides="collect")
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S20 and S21
+
+# Prepare data for phylum level log-ratios
+
+# Read-in and agglomerate data
+ps <- readRDS("ps.RDS") %>%
+  tax_glom("phylum")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$phylum
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]), data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+
+pseudocount <- 0.65 # for clr-transformation
+ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+
+# Filter to the 5 original groups
+metadata_filtered <- metadata_avg %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+```
+
+```{r}
+# fig. S20 and S21
+
+# Taxon log-ratios aggregated over time (fig. S20)
+
+features <- data.frame(feature=colnames(ftbl_avg_clr))
+
+log_ratios_grps_phy <- vector("list", length(c("1.1","1.21","1.22","2.1","2.2")))
+names(log_ratios_grps_phy) <- c("1.1","1.21","1.22","2.1","2.2")
+log_ratios_grps_phy <- lapply(log_ratios_grps_phy, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA, type="phylum"))
+
+std <- function(x) sd(x)/sqrt(length(x))
+
+for(grp in c("1.1","1.21","1.22","2.1","2.2")) {
+  
+  # print(grp)
+  focal_metadata <- metadata_filtered[metadata_filtered$grp %in% grp,][,c("sample_id","grp","collection_date")]
+  
+  for(row in 1:nrow(features)) {
+    
+    log_ratios_grps_phy[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_grps_phy[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+
+
+# Taxon log-ratios for each season and hydrological year (fig. S21)
+
+year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- year_season[-1]
+year_season <- gsub(year_season, pattern="a", replacement="")
+year_season <- gsub(year_season, pattern="b", replacement="")
+
+year_season_grps <- crossing(year_season, grps=c("1.1","1.21","1.22","2.1","2.2"))
+
+log_ratios_year_season_grps_phy <- vector("list", nrow(year_season_grps))
+names(log_ratios_year_season_grps_phy) <- paste0(year_season_grps$year_season,"_",year_season_grps$grps)
+log_ratios_year_season_grps_phy <- lapply(log_ratios_year_season_grps_phy, function(x) cbind(features,log_ratio=NA, log_ratio_std=NA))
+
+for(year_season_grp in names(log_ratios_year_season_grps_phy)) {
+  # print(year_season_grp)
+  
+  focal_metadata <- metadata_filtered[metadata_filtered$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_filtered$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_filtered$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
+  
+  for(row in 1:nrow(features)) {
+                                                                  
+    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S20 and S21
+
+# Prepare data for family level log-ratios
+
+# Read-in and agglomerate data
+ps <- readRDS("ps.RDS") %>% 
+  tax_glom("family")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$family
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]), data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+
+# Filter to the 5 original groups
+metadata_filtered <- metadata_avg %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+
+pseudocount <- 0.65 # for clr-transformation
+ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S20 and S21
+
+# Taxon log-ratios aggregated over time (fig. S20)
+
+features <- data.frame(feature=colnames(ftbl_avg_clr))
+
+log_ratios_grps_fam <- vector("list", length(c("1.1","1.21","1.22","2.1","2.2")))
+names(log_ratios_grps_fam) <- c("1.1","1.21","1.22","2.1","2.2")
+log_ratios_grps_fam <- lapply(log_ratios_grps_fam, function(x) cbind(features, log_ratio=NA, log_ratio_std=NA, type="family"))
+
+std <- function(x) sd(x)/sqrt(length(x))
+
+for(grp in c("1.1","1.21","1.22","2.1","2.2")) {
+  
+  # print(grp)
+  focal_metadata <- metadata_filtered[metadata_filtered$grp %in% grp,][,c("sample_id","grp","collection_date")]
+  
+  for(row in 1:nrow(features)) {
+    
+    log_ratios_grps_fam[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_grps_fam[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+
+
+# Taxon log-ratios for each season and hydrological year (fig. S21)
+
+year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- year_season[-1]
+year_season <- gsub(year_season, pattern="a", replacement="")
+year_season <- gsub(year_season, pattern="b", replacement="")
+
+year_season_grps <- crossing(year_season, grps=c("1.1","1.21","1.22","2.1","2.2"))
+
+log_ratios_year_season_grps_fam <- vector("list", nrow(year_season_grps))
+names(log_ratios_year_season_grps_fam) <- paste0(year_season_grps$year_season,"_",year_season_grps$grps)
+log_ratios_year_season_grps_fam <- lapply(log_ratios_year_season_grps_fam, function(x) cbind(features,log_ratio=NA, log_ratio_std=NA))
+
+for(year_season_grp in names(log_ratios_year_season_grps_fam)) {
+  
+  # print(year_season_grp)
+  focal_metadata <- metadata_filtered[metadata_filtered$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_filtered$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_filtered$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
+  
+  for(row in 1:nrow(features)) {
+                                                                  
+    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  }
+}
+```
+
+```{r, fig. S20, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Plot fig. S20
+
+bind_rows(
+  (log_ratios_grps_fam %>% 
+   bind_rows(.id="grp") %>% 
+   group_by(feature) %>% 
+   mutate(avg_lr=sum(abs(log_ratio))) %>% 
+   ungroup() %>% 
+   arrange(desc(avg_lr)) %>% 
+   mutate(feature=as_factor(feature),
+          feature=factor(feature, levels=rev(levels(feature))))),
+  (log_ratios_grps_phy %>% 
+     bind_rows(.id="grp") %>% 
+     group_by(feature) %>% 
+     mutate(avg_lr=sum(abs(log_ratio))) %>% 
+     ungroup() %>% 
+     arrange(desc(avg_lr)) %>% 
+     mutate(feature=as_factor(feature),
+            feature=factor(feature, levels=rev(levels(feature)))))) %>% 
+  
+  mutate(type=factor(type, levels=c("phylum","family"))) %>% 
+
+  ggplot(aes(x=feature, y=log_ratio, fill=grp)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  facet_wrap(vars(grp), ncol=5) +
+  coord_flip() +
+  theme_bw() +
+  theme(strip.background=element_blank(),
+        strip.text=element_blank(),
+        axis.text.x=element_text(color="black", angle=45, hjust=1, size=14),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.15,"cm"), 
+        axis.text=element_text(size=12, color="black"),
+        axis.title=element_text(size=14, color="black")) +
+  scale_fill_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
+                    labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y="Log fold change")
+```
+
+```{r, fig. S21, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Plot fig. S21
+
+# Taxon log-ratios for each season and hydrological year
+metadata_filtered$hydro_year_season <- paste0(metadata_filtered$hydro_year,"_",metadata_filtered$season)
+metadata_filtered$idx <- as.integer(factor(metadata_filtered$hydro_year_season,levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")))
+rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(2002:2010, each=2)),
+                               data.frame(season=c("Wet","Dry"), stringsAsFactors=F),
+                               data.frame(xmin=NA),
+                               data.frame(xmax=NA),
+                               data.frame(ymin=-Inf),
+                               data.frame(ymax=Inf))
+rect_idx_season_pad <- rect_idx_season_pad[-nrow(rect_idx_season_pad),]
+
+for(n in 1:nrow(rect_idx_season_pad)) {
+  rect_idx_season_pad$xmin[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx)
+  rect_idx_season_pad$xmax[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx+1)
+}
+
+rect_idx_season_pad <- cbind(data.frame(hydro_year=rect_idx_season_pad$hydro_year),
+                             data.frame(season=rect_idx_season_pad$season),
+                             data.frame(xmin=rect_idx_season_pad$xmin),
+                             data.frame(xmax=rect_idx_season_pad$xmax),
+                             data.frame(ymin=rect_idx_season_pad$ymin),
+                             data.frame(ymax=rect_idx_season_pad$ymax))
+
+rect_idx_season_pad$xmin <- rect_idx_season_pad$xmin-1.5
+rect_idx_season_pad$xmax <- rect_idx_season_pad$xmax-1.5
+
+x_breaks_season_pad <- rect_idx_season_pad %>% group_by(hydro_year) %>% summarise(min=min(xmin),max=max(xmax))
+x_breaks_season_pad$min <- x_breaks_season_pad$min+0.5
+x_breaks_season_pad$max <- x_breaks_season_pad$max+0.5
+
+top_6_phy <- log_ratios_grps_phy %>% 
+    bind_rows(.id="grp") %>% 
+    group_by(feature) %>% 
+    mutate(sumAbsLR=sum(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, sumAbsLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[1:6]
+
+bottom_6_phy <- log_ratios_grps_phy %>% 
+    bind_rows(.id="grp") %>% 
+    group_by(feature) %>% 
+    mutate(sumAbsLR=sum(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, sumAbsLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[7:12]
+
+top_6_fam <- log_ratios_grps_fam %>% 
+    bind_rows(.id="grp") %>% 
+    group_by(feature) %>% 
+    mutate(sumAbsLR=sum(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, sumAbsLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[1:6]
+
+bottom_6_fam <- log_ratios_grps_fam %>% 
+    bind_rows(.id="grp") %>% 
+    group_by(feature) %>% 
+    mutate(sumAbsLR=sum(abs(log_ratio))) %>% 
+    ungroup() %>% 
+    mutate(feature=fct_reorder(feature, sumAbsLR, max)) %>% 
+    pull(feature) %>% 
+    levels() %>% 
+    rev() %>% 
+    .[29:34]
+
+p_top6_phy <- log_ratios_year_season_grps_phy %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","grp")) %>% 
+  mutate(feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_", season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         grp=factor(grp)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% top_6_phy) %>%
+  mutate(feature=factor(feature, levels=top_6_phy)) %>% 
+
+  ggplot(aes(x=idx, y=log_ratio, color=grp)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=grp)) +
+  geom_line(aes(group=grp)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
+                     labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-2, 2)) + 
+  labs(title="Top 6 phyla")
+
+p_bottom6_phy <- log_ratios_year_season_grps_phy %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","grp")) %>% 
+  mutate(feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_", season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         grp=factor(grp)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% bottom_6_phy) %>%
+  
+  mutate(feature=factor(feature, levels=bottom_6_phy)) %>% 
+  ggplot(aes(x=idx, y=log_ratio, color=grp)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=grp)) +
+  geom_line(aes(group=grp)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
+                     labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +  
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-2, 2)) + 
+  labs(title="Bottom 6 phyla")
+
+p_top6_fam <- log_ratios_year_season_grps_fam %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","grp")) %>% 
+  mutate(feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_", season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         grp=factor(grp)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% top_6_fam) %>%
+  mutate(feature=factor(feature, levels=top_6_fam)) %>% 
+  
+  ggplot(aes(x=idx, y=log_ratio, color=grp)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=grp)) +
+  geom_line(aes(group=grp)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(legend.position="none",
+        strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
+                     labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-2, 2)) + 
+  labs(title="Top 6 families")
+
+p_bottom6_fam <- log_ratios_year_season_grps_fam %>% 
+  bind_rows(.id="id") %>% 
+  separate(id, sep=c("\\_"), into=c("hydro_year","Season","grp")) %>% 
+  mutate(feature=fct_reorder(feature, log_ratio, min),
+         season=factor(Season, levels=c("Wet","Dry")),
+         hydro_year_season=factor(paste0(hydro_year,"_", season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
+         idx=as.integer(hydro_year_season)-1,
+         grp=factor(grp)) %>% 
+  filter(hydro_year %in% 2002:2010) %>% 
+  filter(feature %in% bottom_6_fam) %>%
+  mutate(feature=factor(feature, levels=bottom_6_fam)) %>% 
+  
+  ggplot(aes(x=idx, y=log_ratio, color=grp)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  scale_fill_manual(values=c("#f6e8c3","#7fbf7b")) +
+  geom_errorbar(aes(ymin=log_ratio-log_ratio_std, ymax=log_ratio+log_ratio_std), width=0.3) +
+  geom_point(aes(group=grp)) +
+  geom_line(aes(group=grp)) +
+  facet_wrap(vars(feature), ncol=2) +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  geom_hline(yintercept=0, color="black", linetype="dashed") +
+  theme_bw() +
+  theme(strip.background=element_blank(),
+        strip.text=element_text(size=12, color="black"),
+        axis.text.x=element_text(angle=45, hjust=1, size=10, color="black"),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.border=element_rect(colour="black", fill=NA, size=1),
+        axis.ticks.length=unit(0.25,"cm"), 
+        axis.text.y=element_text(size=10, color="black"),
+        axis.title=element_text(size=12, color="black"),
+        plot.title = element_text(hjust=0.5)) +
+  scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
+                     labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
+  labs(y="Log fold change", x="Hydrological year") +
+  scale_y_continuous(limits=c(-2, 2)) + 
+  labs(title="Bottom 6 families")
+
+p_top6_phy + p_bottom6_phy + plot_layout(ncol=2, guides="collect")
+p_top6_fam + p_bottom6_fam + plot_layout(ncol=2, guides="collect")
+```
