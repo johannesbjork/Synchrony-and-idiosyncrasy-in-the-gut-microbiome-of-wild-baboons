@@ -3,6 +3,12 @@
 
 Here we fit hierarchical GAMs to 52 different microbiome feature as a function of population, social group and host level factors.
 
+* Response variables
+    * 3 Microbiome PCs
+    * 3 alpha diversity metrics
+    * 12 phyla
+    * 34 families
+
 * Model P (Population)
     * Month
     * Hydrological year 
