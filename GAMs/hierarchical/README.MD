@@ -1,5 +1,7 @@
 
-**Hierarchical GAMs fitting 52 different microbiome feature as a function of population, social group and host level factors**
+**Hierarchical GAMs**
+
+Here we fit hierarchical GAMs to 52 different microbiome feature as a function of population, social group and host level factors.
 
 * Model P (Population)
     * Month
