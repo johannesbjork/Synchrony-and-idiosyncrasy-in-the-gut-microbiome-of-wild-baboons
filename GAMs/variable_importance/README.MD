@@ -2,6 +2,12 @@
 
 Here we fit model P+G+H to all 52 microbiome features. But for each response feature, we successively remove a predictor variable one at a time, while keeping all other predictor variables intact.
 
+* Response variables
+    * 3 Microbiome PCs
+    * 3 alpha diversity metrics
+    * 12 phyla
+    * 34 families
+
 * Model P+G+H (Population + social group + host)
     * Month
     * Hydrological year 
