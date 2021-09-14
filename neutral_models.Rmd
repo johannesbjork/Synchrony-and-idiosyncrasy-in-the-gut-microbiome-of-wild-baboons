@@ -1,0 +1,462 @@
+---
+title: "Neutral models"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(tyRa) # devtools::install_github("DanielSprockett/tyRa")
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+```
+
+In this RMarkdown file, we run the neutral models and reproduce fig. S16.
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load data for population-level analysis
+
+ps <- readRDS("ps.RDS")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),
+                       data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+rownames(metadata_avg) <- metadata_avg$sample_id
+metadata_avg <- subset(metadata_avg, select=-index)
+
+ps <- phyloseq(otu_table(ftbl_avg, taxa_are_rows=F),
+               sample_data(metadata_avg),
+               tax_table(as.matrix(tax)))
+
+# Rarefaction is recommended prior running the neutral model
+ps <- rarefy_even_depth(ps, replace=F, rngseed=123)
+
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+rownames(tax) <- paste0("taxon_",1:nrow(tax))
+tax$taxon_id <- rownames(tax)
+colnames(ftbl) <- rownames(tax)
+
+# Split phyloseq objects into Wet and Dry seasons
+ps_Wet <- prune_samples(samples=sample_data(ps)[sample_data(ps)$season=="Wet",]$sample_id, ps)
+ps_Dry <- prune_samples(samples=sample_data(ps)[sample_data(ps)$season=="Dry",]$sample_id, ps)
+ps_Wet <- prune_taxa(taxa_sums(ps_Wet)>0, ps_Wet)
+ps_Dry <- prune_taxa(taxa_sums(ps_Dry)>0, ps_Dry)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Read in functions to run the two versions of the neutral model
+
+# Main function to run the neutral model with the meta-community defined across the host population
+sncm_pop_year_function <- function() {
+  
+  ## Pseudocode
+  # For each permutation do:
+    # Take one random sample from each host across the whole host population per season per hydrological year
+      # A hypothetical example, for hy=2002 and s=wet, there could be a total of 200 hosts and 2000 samples across the whole population. Here we take one random sample per host, thus creating a subsetted data consisting of 200 samples from 200 hosts
+    # Fit the neutral model
+      # Use as local community the ASV table generated above for the focal hydro year and season combination (200 samples x 341 ASVs).
+      # Use all samples present the population for the focal hydro year and season combination as meta-community (2000 samples x 341 ASVs)  
+  # Repeat 500 times and extract m at each step (this step is done outside function)
+
+  hydroyear_ls <- vector("list", 9)
+  names(hydroyear_ls) <- as.character(2002:2010)
+  season_ls <- vector("list", 2)
+  names(season_ls) <- c("Wet","Dry")
+  hydroyear_season_ls <- lapply(hydroyear_ls, function(x) season_ls)
+  
+  # Take one random sample from each host per group per season per hydroyear 
+  # We only take one sample per host as there are many hosts with only a few samples
+  
+  for(hy in  as.character(2002:2010)) {
+    for(s in c("Wet","Dry")) {
+      
+      #print(g); print(hy); print(s)
+    
+      ps_season <- get(paste0("ps","_", s))
+      
+      skip_to_next <- FALSE
+      
+      tryCatch({
+        ps_season_year <- prune_samples(sample_data(ps_season)[sample_data(ps_season)$hydro_year %in% hy,]$sample_id, ps_season)
+      }, error = function(e) { skip_to_next <<- TRUE})
+      if(skip_to_next) { next } 
+      
+      ftbl_season_year <- as(otu_table(ps_season_year),"matrix") 
+      mdat_season_year <- as(sample_data(ps_season_year), "data.frame")
+      
+      hosts <- as.character(unique(mdat_season_year$host))
+      host_ls <- vector("list", length(hosts))
+      names(host_ls) <- hosts
+      for(h in hosts) {
+        host_ls[[h]] <- mdat_season_year %>% 
+          filter(host==h) %>% 
+          sample_n(size=1, replace=F)
+      }
+      
+      hydroyear_season_ls[[hy]][[s]] <- host_ls %>% bind_rows()
+    }
+  }
+  
+  hydroyear_season_df <- do.call(rbind, do.call(rbind, hydroyear_season_ls)) 
+  
+  sncm_output <- vector("list", length(hydroyear_season_ls))
+  sncm_plots <- vector("list", length(hydroyear_season_ls))
+  
+  # 
+  for(hy in  as.character(2002:2010)) {
+    #print(hy)
+    for(s in c("Wet","Dry")) {
+      #print(s)
+      
+      ps_local <- get(paste0("ps_", s))
+      ps_local <- prune_samples(sample_data(ps_local)[sample_data(ps_local)$hydro_year %in% hy & sample_data(ps_local)$season==s,]$sample_id, ps_local)
+      
+      local <- hydroyear_season_df[hydroyear_season_df$hydro_year==hy & hydroyear_season_df$season==s,]
+      ps_local <- prune_samples(samples=local$sample_id, ps_local)
+      ps_local <- prune_taxa(taxa_sums(ps_local)>0, ps_local)
+        
+      ps_meta <- get(paste0("ps_", s))
+      ps_meta <- prune_samples(sample_data(ps_meta)[sample_data(ps_meta)$hydro_year==hy & sample_data(ps_meta)$season==s,]$sample_id, ps_meta)
+      ps_meta <- prune_taxa(taxa_sums(ps_meta)>0, ps_meta)
+      
+      sncm_output[[hy]][[s]] <- tyRa::fit_sncm(spp=otu_table(ps_local)@.Data, pool=otu_table(ps_meta)@.Data, taxon=data.frame(tax_table(ps_local)))$predictions
+      sncm_plots[[hy]][[s]] <- tyRa::fit_sncm(spp=otu_table(ps_local)@.Data, pool=otu_table(ps_meta)@.Data, taxon=data.frame(tax_table(ps_local)))
+    }
+  }
+  out <- list(output=sncm_output, for_plots=sncm_plots)
+  return(out)
+}
+
+# Main function to run the neutral model with the meta-community defined on the social group level 
+sncm_grp_year_function <- function() {
+  
+  ## Pseudocode
+  # For each permutation do:
+    # For each social group do (e.g. 1.1):
+      # Take one random sample from each host in the focal social group (grp 1.1) per season per hydrological year.
+      # For example, for g=1.1, hy=2002 and s=wet, there is a total of 49 hosts and 456 samples. Here we take one random sample per host, thus creating a subsetted data consisting of 49 samples from 49 hosts
+    # Fit the neutral model
+      # Use as local community the ASV table generated above for the focal group - hydro year - season combination (49 samples x 341 ASVs).
+      # Use all samples from group 1.1 in the same hydro year - season as metacommunity (456 samples x 341 ASVs)     
+    # Repeat 500 times and extract m at each step (this step is done outside function)
+  
+  hydroyear_ls <- vector("list", 9)
+  names(hydroyear_ls) <- as.character(2002:2010)
+  season_ls <- vector("list", 2)
+  names(season_ls) <- c("Wet","Dry")
+  hydroyear_season_ls <- lapply(hydroyear_ls, function(x) season_ls)
+  
+  grp_ls <- vector("list", 5)
+  names(grp_ls) <- c("1.1","1.21","1.22","2.1","2.2")
+  grp_hydroyear_season_ls <- lapply(grp_ls, function(x) hydroyear_season_ls)
+  
+  # Take one random sample from each host per group per season per hydroyear 
+  # We only take one sample per host as there are many hosts with only a few samples
+  
+  for(g in c("1.1","1.21","1.22","2.1","2.2")) {
+    for(hy in  as.character(2002:2012)) {
+      for(s in c("Wet","Dry")) {
+        
+        #print(g); print(hy); print(s)
+        
+        grp <- str_replace(string=g, pattern="\\.", replacement="") 
+        
+        ps_grp_season <- get(paste0("ps_grp", grp, "_", s))
+        
+        skip_to_next <- FALSE
+        
+        tryCatch({
+          ps_grp_season_year <- prune_samples(sample_data(ps_grp_season)[sample_data(ps_grp_season)$hydro_year %in% hy,]$sample_id, ps_grp_season)
+        }, error = function(e) { skip_to_next <<- TRUE})
+        if(skip_to_next) { next } 
+        
+        ftbl_grp_season_year <- as(otu_table(ps_grp_season_year),"matrix") 
+        mdat_grp_season_year<- as(sample_data(ps_grp_season_year), "data.frame")
+        
+        hosts <- as.character(unique(mdat_grp_season_year$host))
+        host_ls <- vector("list", length(hosts))
+        names(host_ls) <- hosts
+        for(h in hosts) {
+          host_ls[[h]] <- mdat_grp_season_year %>% 
+            filter(host==h) %>% 
+            sample_n(size=1, replace=F)
+        }
+        
+        grp_hydroyear_season_ls[[g]][[hy]][[s]] <- host_ls %>% bind_rows()
+      }
+    }
+  }
+  
+  grp_hydroyear_season_df <- do.call(rbind, do.call(rbind, do.call(rbind, grp_hydroyear_season_ls))) 
+  
+  # fit neutral model to each perm_id: for each grp (local community) and use all the samples from the focal group - hy - season as the metacommunity  
+  sncm_grps_output <- lapply(grp_ls, function(x) hydroyear_season_ls)
+  sncm_grps_plots <- lapply(grp_ls, function(x) hydroyear_season_ls)
+  
+  for(g in c("1.1","1.21","1.22","2.1","2.2")) {
+    #print(g)
+    for(hy in  as.character(2002:2010)) {
+      #print(hy)
+      for(s in c("Wet","Dry")) {
+        #print(s)
+        
+        grp <- str_replace(string=g, pattern="\\.", replacement="") 
+        
+        ps_local <- get(paste0("ps_grp", grp, "_", s))
+        ps_local <- prune_samples(sample_data(ps_local)[sample_data(ps_local)$hydro_year %in% hy,]$sample_id, ps_local)
+        
+        ftbl_local <- as(otu_table(ps_local),"matrix") 
+        ftbl_local <- grp_hydroyear_season_df[grp_hydroyear_season_df$grp==g & grp_hydroyear_season_df$hydro_year==hy & grp_hydroyear_season_df$season==s,]
+        ps_local <- prune_samples(samples=rownames(ftbl_local), ps_local)
+        ps_local <- prune_taxa(taxa_sums(ps_local)>0, ps_local)
+        
+        ps_meta <- get(paste0("ps_", s))
+        ps_meta <- prune_samples(sample_data(ps_meta)[sample_data(ps_meta)$grp==g & sample_data(ps_meta)$hydro_year==hy & sample_data(ps_meta)$season==s,]$sample_id, ps_meta)
+        
+        sncm_grps_output[[g]][[hy]][[s]] <- tyRa::fit_sncm(spp=otu_table(ps_local)@.Data, pool=otu_table(ps_meta)@.Data, taxon=data.frame(tax_table(ps_local)))$predictions
+        sncm_grps_plots[[g]][[hy]][[s]] <- tyRa::fit_sncm(spp=otu_table(ps_local)@.Data, pool=otu_table(ps_meta)@.Data, taxon=data.frame(tax_table(ps_local)))
+      }
+    }
+  }
+  out <- list(output=sncm_grps_output, for_plots=sncm_grps_plots)
+  return(out)
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Running 500 permutations takes a while, so for this demo, we're doing 5
+n_perm <- 5 # 500
+
+# Population level
+perm_sncm_pop_year <- vector("list", n_perm)
+names(perm_sncm_pop_year) <- 1:n_perm
+for(i in 1:n_perm){
+  # print(i)
+  perm_sncm_pop_year[[i]] <- sncm_pop_year_function()
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+## Extract m for population level models
+
+m_in_wet <- data.frame(hydro_year=as.character(2002:2010), m=NA)
+m_in_dry <- data.frame(hydro_year=as.character(2002:2010), m=NA)
+
+perm_ls <- vector("list", n_perm)
+names(perm_ls) <- 1:n_perm
+m_in_wet_perms <- lapply(perm_ls, function(x) m_in_wet)
+m_in_dry_perms <- lapply(perm_ls, function(x) m_in_dry)
+
+
+for(i in 1:n_perm) {
+  for(hy in as.character(2002:2010)) {
+    m_in_wet_perms[[i]][m_in_wet_perms[[i]]$hydro_year==hy,]$m <- as.numeric(perm_sncm_pop_year[[i]]$for_plots[[hy]]$Wet$fitstats["m"])
+    m_in_dry_perms[[i]][m_in_dry_perms[[i]]$hydro_year==hy,]$m <- as.numeric(perm_sncm_pop_year[[i]]$for_plots[[hy]]$Dry$fitstats["m"])
+  }
+}
+
+m_in_wet_pop_ls <- vector("list", n_perm)
+m_in_dry_pop_ls <- vector("list", n_perm)
+
+for(i in 1:n_perm) {
+  m_in_wet_pop_ls[[i]] <- m_in_wet_perms[[i]] %>% mutate(perm=i)
+  m_in_wet_pop_ls[[i]] <- m_in_dry_perms[[i]] %>% mutate(perm=i)
+}
+
+m_in_wet_pop_df <- m_in_wet_pop_ls %>% bind_rows() %>% group_by(hydro_year) %>% summarise(mean=mean(m), std=sd(m)) %>% mutate(season="Wet")
+m_in_dry_pop_df <- m_in_wet_pop_ls %>% bind_rows() %>% group_by(hydro_year) %>% summarise(mean=mean(m), std=sd(m)) %>% mutate(season="Dry")  
+
+m_in_wet_pop_df$grp <- "pop"
+m_in_dry_pop_df$grp <- "pop"
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Load data for social group-level analysis
+
+ps <- readRDS("ps.RDS")
+
+metadata <- as(sample_data(ps), "data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+
+# Average samples (read counts) collected from the same host in the same group sampled the same date
+index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
+ftbl_avg <- data.frame(ftbl, index)
+ftbl_avg <- as.matrix(aggregate(.~index, ftbl_avg, mean))
+metadata_avg <- cbind(data.frame(metadata[,c("sample_id","collection_date","season","hydro_year","month", "grp", "host")]),
+                       data.frame(index=index))
+rownames(ftbl_avg) <- metadata_avg[!duplicated(index),]$sample_id
+metadata_avg <- metadata_avg[metadata_avg$sample_id %in% rownames(ftbl_avg),]
+ftbl_avg <- subset(ftbl_avg, select=-index)
+ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
+ftbl_avg <- ceiling(ftbl_avg)
+rownames(metadata_avg) <- metadata_avg$sample_id
+metadata_avg <- subset(metadata_avg, select=-index)
+
+ps <- phyloseq(otu_table(ftbl_avg, taxa_are_rows=F),
+               sample_data(metadata_avg),
+               tax_table(as.matrix(tax)))
+
+# Rarefaction is recommended prior running the neutral model
+ps <- rarefy_even_depth(ps, replace=F, rngseed=123)
+
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+rownames(tax) <- paste0("taxon_",1:nrow(tax))
+tax$taxon_id <- rownames(tax)
+colnames(ftbl) <- rownames(tax)
+
+# Split phyloseq objects into Wet and Dry seasons
+ps_Wet <- prune_samples(samples=sample_data(ps)[sample_data(ps)$season=="Wet",]$sample_id, ps)
+ps_Dry <- prune_samples(samples=sample_data(ps)[sample_data(ps)$season=="Dry",]$sample_id, ps)
+ps_Wet <- prune_taxa(taxa_sums(ps_Wet)>0, ps_Wet)
+ps_Dry <- prune_taxa(taxa_sums(ps_Dry)>0, ps_Dry)
+
+# Create a phyloseq object for each social group
+for(sg in c("1.1","1.21","1.22","2.1","2.2")) {
+  
+  phylo_obj <- prune_samples(samples=sample_data(ps)[sample_data(ps)$grp==sg,]$sample_id, ps)
+  phylo_obj <- prune_taxa(taxa_sums(phylo_obj)>0, phylo_obj)
+  
+  phylo_obj_wet <- prune_samples(samples=sample_data(ps)[sample_data(ps)$grp==sg & sample_data(ps)$season=="Wet",]$sample_id, ps)
+  phylo_obj_wet <- prune_taxa(taxa_sums(phylo_obj_wet)>0, phylo_obj_wet)
+  
+  phylo_obj_dry <- prune_samples(samples=sample_data(ps)[sample_data(ps)$grp==sg & sample_data(ps)$season=="Dry",]$sample_id, ps)
+  phylo_obj_dry <- prune_taxa(taxa_sums(phylo_obj_dry)>0, phylo_obj_dry)
+  
+  sg <- str_replace(string=sg, pattern="\\.", replacement="") 
+  assign(paste0("ps_grp",sg), phylo_obj)
+  assign(paste0("ps_grp",sg,"_Wet"), phylo_obj_wet)
+  assign(paste0("ps_grp",sg,"_Dry"), phylo_obj_dry)
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Running 500 permutations takes a while, so for this demo, we're doing 5
+n_perm <- 5 # 500
+
+# Social group level
+perm_sncm_grp_year <- vector("list", n_perm)
+names(perm_sncm_grp_year) <- 1:n_perm
+for(i in 1:n_perm){
+  # print(i)
+  perm_sncm_grp_year[[i]] <- sncm_grp_year_function()
+}
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+## Extract m for group level models
+
+# m averaged for each permutation (i.e. across hosts per permutation)
+m_in_hydroyear <- data.frame(hydro_year=as.character(2002:2010), m=NA)
+n_grps <- length(c("1.1","1.21","1.22","2.1","2.2"))
+m_in_wet <- vector("list", n_grps)
+m_in_dry <- vector("list", n_grps)
+names(m_in_wet) <- names(m_in_dry) <- c("1.1","1.21","1.22","2.1","2.2")
+m_in_wet <- lapply(m_in_wet, function(x) m_in_hydroyear)
+m_in_dry <- lapply(m_in_dry, function(x) m_in_hydroyear)
+
+perm_ls <- vector("list", n_perm)
+names(perm_ls) <- 1:n_perm
+m_in_wet_perms <- lapply(perm_ls, function(x) m_in_wet)
+m_in_dry_perms <- lapply(perm_ls, function(x) m_in_dry)
+
+
+for(i in 1:n_perm) {
+  for(g in c("1.1","1.21","1.22","2.1","2.2")) {
+    for(hy in as.character(2002:2010)) {
+      m_in_wet_perms[[i]][[g]][m_in_wet_perms[[i]][[g]]$hydro_year==hy,]$m <- as.numeric(perm_sncm_grp_year[[i]]$for_plots[[g]][[hy]]$Wet$fitstats["m"])
+      m_in_dry_perms[[i]][[g]][m_in_dry_perms[[i]][[g]]$hydro_year==hy,]$m <- as.numeric(perm_sncm_grp_year[[i]]$for_plots[[g]][[hy]]$Dry$fitstats["m"])
+    }
+  }
+}
+
+m_in_wet_grp_ls <- vector("list", n_perm)
+m_in_dry_grp_ls <- vector("list", n_perm)
+
+for(i in 1:n_perm) {
+  m_in_wet_grp_ls[[i]] <- m_in_wet_perms[[i]] %>% bind_rows(.id="grp") %>% mutate(perm=i)
+  m_in_dry_grp_ls[[i]] <- m_in_dry_perms[[i]] %>% bind_rows(.id="grp") %>% mutate(perm=i)
+}
+
+m_in_wet_grp_df <- m_in_wet_grp_ls %>% bind_rows() %>% group_by(grp, hydro_year) %>% summarise(mean=mean(m), std=sd(m)) %>% mutate(season="Wet")
+m_in_dry_grp_df <- m_in_dry_grp_ls %>% bind_rows() %>% group_by(grp, hydro_year) %>% summarise(mean=mean(m), std=sd(m)) %>% mutate(season="Dry")  
+```
+
+```{r}
+## Plot results
+
+# Below code is to plot green and yellow background panels for wet and dry seasons, respectively  
+metadata$hydro_year_season <- paste0(metadata$hydro_year,"_",metadata$season)
+metadata$idx <- as.integer(factor(metadata$hydro_year_season,levels=c("2001_Wet","2001_Dry","2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")))
+rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(2001:2010, each=2)),
+                               data.frame(season=c("Wet","Dry"), stringsAsFactors=F),
+                               data.frame(xmin=NA),
+                               data.frame(xmax=NA),
+                               data.frame(ymin=-Inf),
+                               data.frame(ymax=Inf))
+rect_idx_season_pad <- rect_idx_season_pad[-1,]
+
+for(n in 1:nrow(rect_idx_season_pad)) {
+  print(n)
+  rect_idx_season_pad$xmin[n] <- metadata[metadata$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata$season %in% rect_idx_season_pad$season[n],]$idx
+  rect_idx_season_pad$xmax[n] <- metadata[metadata$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata$season %in% rect_idx_season_pad$season[n],]$idx+1
+}
+
+rect_idx_season_pad <- cbind(data.frame(hydro_year=rect_idx_season_pad$hydro_year[2:19]),
+                             data.frame(season=rect_idx_season_pad$season[2:19]),
+                             data.frame(xmin=rect_idx_season_pad$xmin[2:19]),
+                             data.frame(xmax=rect_idx_season_pad$xmax[2:19]),
+                             data.frame(ymin=rect_idx_season_pad$ymin[2:19]),
+                             data.frame(ymax=rect_idx_season_pad$ymax[2:19]))
+
+rect_idx_season_pad$xmin <- rect_idx_season_pad$xmin-1.5
+rect_idx_season_pad$xmax <- rect_idx_season_pad$xmax-1.5
+
+x_breaks_season_pad <- rect_idx_season_pad %>% group_by(hydro_year) %>% summarise(min=min(xmin),max=max(xmax))
+x_breaks_season_pad$min <- x_breaks_season_pad$min+0.5
+x_breaks_season_pad$max <- x_breaks_season_pad$max+0.5
+
+# Plot the estimated m for the population and social group level models in one plot 
+bind_rows(m_in_wet_pop_df, m_in_dry_pop_df, m_in_wet_grp_df, m_in_dry_grp_df) %>% 
+  mutate(hydro_year_season=paste0(hydro_year,"_",season),
+         hydro_year_season=factor(hydro_year_season, levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")),
+         season=factor(season, levels=c("Wet","Dry")),
+         idx=as.integer(hydro_year_season)+1) %>%  
+  ggplot(aes(x=idx, y=mean, color=grp, group=grp)) +
+  geom_rect(data=rect_idx_season_pad, inherit.aes=FALSE, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, fill=factor(season)), alpha=0.7, show.legend=F) + 
+  geom_ribbon(aes(ymin=mean-std, ymax=mean+std, color=NULL, fill=grp), alpha=0.3) +
+  geom_point(size=2) + 
+  geom_line() +
+  scale_x_continuous(breaks=x_breaks_season_pad$min, labels=x_breaks_season_pad$hydro_year, expand=c(0,0)) + 
+  theme(
+    legend.title=element_blank(),
+    legend.key=element_rect(fill='white'),
+    legend.text=element_text(size=12, color="black"),
+    strip.background=element_blank(),
+    strip.text=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.25,"cm"), 
+    axis.text=element_text(size=10, color="black")) +
+  labs(x="Hydrological year", y="Estimated migration probability (m)") +
+  scale_color_manual(values=c("pop"="black","1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"), labels=c("Population", "Nyayo's", "Omo's", "Viola's", "Lida's", "Weaver's")) +
+  scale_fill_manual(values=c("Dry"="#f6e8c3","Wet"="#7fbf7b","pop"="black","1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b")) +
+  guides(fill=FALSE) +
+  scale_y_continuous(breaks=seq(0,0.5,by=0.1), labels=seq(0,0.5,by=0.1), limits=c(0,0.5))
+```
