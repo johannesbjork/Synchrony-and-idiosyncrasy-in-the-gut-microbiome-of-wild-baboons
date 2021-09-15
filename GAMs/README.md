@@ -12,13 +12,13 @@ To quantify how much each predictor variable (n=28) in model P+G+H contributed t
 ## Sanity checks
 In many settings, increasing the complexity (i.e., degrees of freedom) of a model also increases variance or deviance explained, even if additional model parameters do not improve model fit. To ensure that this explanation does not account for our observation that the hierarchical models explain more deviance than single level models (e.g., P+G versus P), we performed three analyses. In the first and second analysis, we randomized social group membership and host identity, including group and host-level covariates (see below for more information). In the third analysis, we performed a simulation to investigate the effect of model complexity on deviance explained.
 
-**1. Group and host label randomizations**
+**1. Group and host label randomizations** /n
 We first ran model P+G+H 10 times, each time randomizing social group membership and group-level covariates across samples while keeping each sample’s host identity intact. We extracted the deviance explained for each model and averaged across the 10 permutations. These results are presented in Fig. S17 (‘Average of group label permutations’). We then ran model P+G+H 10 times, each time randomizing host identity and traits across samples while keeping each sample’s annual, seasonal, and group identity intact. We extracted the deviance explained for each model and averaged across the 10 permutations. These results are presented in Fig. S17 (‘Average of host label permutations’).
 
-**2. Simulation**
+**2. Simulation** /n
 We simulated data with a strong population-level effect, but with a very similar average functional response among social groups. We simulated data from 4 hosts, each with 100 samples divided into two social groups. We fit two models mimicking model P and model P+G. These models were fit using mgcv::bam(…, select=F, method=”ML”). The result from this analysis is presented in Fig. S18. 
 
-References
+## References
 1.  S. N. Wood, Generalized Additive Models: An Introduction with R, Second Edition (CRC Press, 2017).
 2.	E. J. Pedersen, D. L. Miller, G. L. Simpson, N. Ross, Hierarchical generalized additive models in ecology: an introduction with mgcv. PeerJ 7, e6876 (2019).
 3.	A. Karatzoglou, A. Smola, K. Hornik, A. Zeileis, kernlab- AnS4Package for Kernel Methods inR. J. Stat. Softw. 1, 1–20 (2004).
