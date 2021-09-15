@@ -1,0 +1,365 @@
+---
+title: "Grooming analysis"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggpubr)
+library(rstatix)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Read-in data
+within_grp_groom <- readRDS("Data/within_grp_groom.RDS") 
+```
+
+```{r, fig. S23, echo=T, eval=T, message=FALSE, warning=FALSE}
+#fig. S23
+
+# Compute 95% CIs for each interaction threshold
+
+grp_names <- setNames(c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's"), 
+                      c("1.10", "1.21", "1.22" , "2.10", "2.20"))
+
+par(mfrow = c(3,2), mar = c(4,4,3,3), oma = c(1,3,1,1))
+
+# Overall (i.e. across social groups)
+
+high <- within_grp_groom %>%
+    filter(threshold=="high") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  medium <- within_grp_groom %>%
+    filter(threshold=="medium") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  low <- within_grp_groom %>%
+    filter(threshold=="low") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  lowest <- within_grp_groom %>%
+    filter(threshold=="lowest") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+          upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+
+  # Compute moving averages
+  high_ma <- TTR::SMA(high$rho_mean, n=30)
+  medium_ma <- TTR::SMA(medium$rho_mean, n=30)
+  low_ma <- TTR::SMA(low$rho_mean, n=30)
+  lowest_ma <- TTR::SMA(lowest$rho_mean, n=30)
+
+  plot(x=high$lags_days, y=high$rho_mean, main="Overall", ylab="Aitchison similarity", xaxt="n", xlab="Number of months between samples", type="n", ylim=c(0.6,0.68), las=1)
+  axis(side=1, seq(1, 365, by=30), labels=c(0:12))
+  with(high, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#c7e9c0",0.5), border = FALSE))
+  with(medium, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#eff3ff",0.5), border = FALSE))
+  with(low, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#fee391",0.5), border = FALSE))
+  with(lowest, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#fcbba1",0.5), border = FALSE))
+  
+  points(x=high$lags_days, y=high$rho_mean, col=alpha("#74c476",0.8), cex=0.5, pch=19)
+  points(x=medium$lags_days, y=medium$rho_mean, col=alpha("#6baed6",0.8), cex=0.5, pch=19)
+  points(x=low$lags_days,y=low$rho_mean, col=alpha("#fe9929",0.8), cex=0.5, pch=19)
+  points(x=lowest$lags_days,y=lowest$rho_mean, col=alpha("#fb6a4a",0.8), cex=0.5, pch=19)
+  
+  points(x=high$lags_days, y=high_ma, col=alpha("#238b45",0.8), cex=0.5, type="l", lwd=2)
+  points(x=medium$lags_days, y=medium_ma, col=alpha("#2171b5",0.8), cex=0.5, type="l", lwd=2)
+  points(x=low$lags_days, y=low_ma, col=alpha("#ec7014",0.8), cex=0.5, type="l", lwd=2)
+  points(x=lowest$lags_days, y=lowest_ma, col=alpha("#cb181d",0.8), cex=0.5, type="l", lwd=2)
+
+for(gr in c("1.10", "1.21", "1.22" , "2.10", "2.20")) {
+  
+  high <- within_grp_groom %>%
+    filter(grp==gr, threshold=="high") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  medium <- within_grp_groom %>%
+    filter(grp==gr, threshold=="medium") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  low <- within_grp_groom %>%
+    filter(grp==gr, threshold=="low") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+  
+  lowest <- within_grp_groom %>%
+    filter(grp==gr, threshold=="lowest") %>% 
+    select(aitch_sim, lags_days, threshold) %>%
+    group_by(lags_days, threshold) %>%
+    dplyr::summarize(rho_mean=mean(aitch_sim, na.rm=TRUE), rho_sd=sd(aitch_sim, na.rm=TRUE), sample_size=n()) %>%
+    mutate(rho_se = rho_sd / sqrt(sample_size), 
+           lower.ci = rho_mean - qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+          upper.ci = rho_mean + qt(1 - (0.05 / 2), sample_size - 1) * rho_se,
+           grp=gr,
+           threshold=as.character(threshold))
+
+  # Compute moving averages
+  high_ma <- TTR::SMA(high$rho_mean, n=30)
+  medium_ma <- TTR::SMA(medium$rho_mean, n=30)
+  low_ma <- TTR::SMA(low$rho_mean, n=30)
+  lowest_ma <- TTR::SMA(lowest$rho_mean, n=30)
+
+  plot(x=high$lags_days, y=high$rho_mean, main=unname(grp_names[gr]), ylab="Aitchison similarity", xaxt="n", xlab="Number of months between samples", type="n", ylim=c(0.6,0.68), las=1)
+  axis(side=1, seq(1, 365, by=30), labels=c(0:12))
+  with(high, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#c7e9c0",0.5), border = FALSE))
+  with(medium, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#eff3ff",0.5), border = FALSE))
+  with(low, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#fee391",0.5), border = FALSE))
+  with(lowest, polygon(c(rev(0:364), 0:364), c(rev(lower.ci), upper.ci), col=alpha("#fcbba1",0.5), border = FALSE))
+  
+  points(x=high$lags_days, y=high$rho_mean, col=alpha("#74c476",0.8), cex=0.5, pch=19)
+  points(x=medium$lags_days, y=medium$rho_mean, col=alpha("#6baed6",0.8), cex=0.5, pch=19)
+  points(x=low$lags_days,y=low$rho_mean, col=alpha("#fe9929",0.8), cex=0.5, pch=19)
+  points(x=lowest$lags_days,y=lowest$rho_mean, col=alpha("#fb6a4a",0.8), cex=0.5, pch=19)
+  
+  points(x=high$lags_days, y=high_ma, col=alpha("#238b45",0.8), cex=0.5, type="l", lwd=2)
+  points(x=medium$lags_days, y=medium_ma, col=alpha("#2171b5",0.8), cex=0.5, type="l", lwd=2)
+  points(x=low$lags_days, y=low_ma, col=alpha("#ec7014",0.8), cex=0.5, type="l", lwd=2)
+  points(x=lowest$lags_days, y=lowest_ma, col=alpha("#cb181d",0.8), cex=0.5, type="l", lwd=2)
+} 
+```
+
+```{r, fig. S24, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S24
+
+grp_names <- setNames(c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's"), 
+                      c("1.10", "1.21", "1.22" , "2.10", "2.20"))
+
+# Compute kruskal and dunn statistics
+dunn_stats <- vector("list", 6)
+names(dunn_stats) <- c("overall","1.10","1.21","1.22","2.10","2.20")
+
+kruskal_stats <- vector("list", 6)
+names(kruskal_stats) <- c("overall","1.10","1.21","1.22","2.10","2.20")
+
+for(g in c("overall","1.10","1.21","1.22","2.10","2.20")) {
+
+  if(g=="overall") {
+    dunn_stats[[g]] <- within_grp_groom %>% 
+      filter(lags_days<=30) %>%
+      dunn_test(aitch_sim~threshold, p.adjust.method="fdr") %>% 
+      add_xy_position()
+    
+    kruskal_stats[[g]] <- within_grp_groom %>%
+      filter(lags_days<=30) %>%
+      kruskal_test(aitch_sim~threshold)
+    
+  } else {
+    dunn_stats[[g]] <- within_grp_groom %>% 
+    filter(lags_days<=30, grp %in% g) %>%
+    dunn_test(aitch_sim~threshold, p.adjust.method="fdr") %>% 
+    add_xy_position()
+    
+    kruskal_stats[[g]] <- within_grp_groom %>%
+    filter(lags_days<=30, grp %in% g) %>%
+    kruskal_test(aitch_sim~threshold)
+  }
+}
+
+# Plot 
+p0 <- within_grp_groom %>% 
+  filter(lags_days<=30) %>% 
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1) + 
+  theme(
+    legend.title=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.10,"cm"), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_text(size=14, color="black"),
+    axis.text.y=element_text(size=12, color="black"),
+    plot.title=element_text(hjust=0.5, color="black", size=12)) + 
+  scale_fill_manual(values=RColorBrewer::brewer.pal(5, "Greys")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title="Overall", y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["overall"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.08) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["overall"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["overall"]])
+  )
+  
+p_1.1 <- within_grp_groom %>% 
+  filter(lags_days<=30, grp=="1.10") %>%
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1, color="gray") + 
+  theme(
+    legend.title=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.10,"cm"), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_text(size=14, color="black"),
+    axis.text.y=element_text(size=12, color="black"),
+    plot.title=element_text(hjust=0.5, color="black", size=12)) +
+  scale_fill_manual(values=RColorBrewer::brewer.pal(5, "Reds")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title=unname(grp_names["1.10"]), y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["1.10"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.1) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["1.10"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["1.10"]])
+  )
+
+p_1.21 <- within_grp_groom %>% 
+  filter(lags_days<=30, grp=="1.21") %>% 
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1, color="gray") + 
+  theme(
+    legend.title=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.10,"cm"), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_text(size=14, color="black"),
+    axis.text.y=element_text(size=12, color="black"),
+    plot.title=element_text(hjust=0.5, color="black", size=12))  +
+  scale_fill_manual(values=RColorBrewer::brewer.pal(5, "Oranges")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title=unname(grp_names["1.21"]), y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["1.21"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.04) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["1.21"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["1.21"]])
+  )
+  
+p_1.22 <- within_grp_groom %>% 
+  filter(lags_days<=30, grp=="1.22") %>% 
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1, color="gray") + 
+  theme(
+    legend.title=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.10,"cm"), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_text(size=14, color="black"),
+    axis.text.y=element_text(size=12, color="black"),
+    plot.title=element_text(hjust=0.5, color="black", size=12)) +
+  scale_fill_manual(values=RColorBrewer::brewer.pal(5, "Blues")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title=unname(grp_names["1.22"]), y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["1.22"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.1) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["1.22"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["1.22"]])
+  )
+
+p_2.1 <- within_grp_groom %>% 
+  filter(lags_days<=30, grp=="2.10") %>% 
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1, color="gray") + 
+  theme(
+    legend.title=element_blank(),
+    panel.grid.major=element_blank(), 
+    panel.grid.minor=element_blank(), 
+    panel.background=element_rect(fill="white"),
+    panel.border=element_rect(colour="black", fill=NA, size=1),
+    axis.ticks.length=unit(0.10,"cm"), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_text(size=14, color="black"),
+    axis.text.y=element_text(size=12, color="black"),
+    plot.title=element_text(hjust=0.5, color="black", size=12))  +
+  scale_fill_manual(values=RColorBrewer::brewer.pal(6, "PuRd")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title=unname(grp_names["2.10"]), y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["2.10"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.1) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["2.10"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["2.10"]])
+  )
+
+p_2.2 <- within_grp_groom %>% 
+  filter(lags_days<=30, grp=="2.20") %>% 
+  ggplot(aes(x=threshold, y=aitch_sim)) +
+  geom_violin(aes(fill=threshold), color=NA) +
+  geom_boxplot(outlier.colour=NA, notch=T, width=0.1, color="gray") + 
+  theme(
+  legend.title=element_blank(),
+  panel.grid.major=element_blank(), 
+  panel.grid.minor=element_blank(), 
+  panel.background=element_rect(fill="white"),
+  panel.border=element_rect(colour="black", fill=NA, size=1),
+  axis.ticks.length=unit(0.10,"cm"), 
+  axis.text.x=element_blank(),
+  axis.ticks.x=element_blank(),
+  axis.title.y=element_text(size=14, color="black"),
+  axis.text.y=element_text(size=12, color="black"),
+  plot.title=element_text(hjust=0.5, color="black", size=12))  +
+  scale_fill_manual(values=RColorBrewer::brewer.pal(6, "Greens")[2:5]) +
+  scale_y_continuous(breaks=seq(0.5,1,by=0.1),labels=seq(0.5,1,by=0.1), limits=c(0.5,1)) +
+  labs(title=unname(grp_names["2.20"]), y="Aitchison similarity", x=NULL) +
+  stat_pvalue_manual(dunn_stats[["2.20"]], hide.ns=TRUE, tip.length=0.01, step.increase=0.07) +
+  labs(
+    subtitle=get_test_label(kruskal_stats[["2.20"]], detailed=TRUE),
+    caption=get_pwc_label(dunn_stats[["2.20"]])
+  )
+
+p0 + p_1.1 + p_1.21 + p_1.22 + p_2.1 + p_2.2 + plot_layout(ncol=2)
+
+```
