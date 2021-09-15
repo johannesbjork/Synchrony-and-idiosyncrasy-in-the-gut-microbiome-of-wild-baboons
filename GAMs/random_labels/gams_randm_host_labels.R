@@ -6,7 +6,7 @@ nthreads <- 24
 
 # This is for host_randm1 (we ran these models for host_randm1-10) 
 
-metadata <- readRDS("metadata_shuffled_host_labels.RDS")
+metadata <- readRDS("metadata_shuffled_host_labels.RDS") # I have not uploaded these data, run randomize_host_and_grp_labels.Rmd to generate it
 
 responses <- c("modified_PC1", "modified_PC2", "modified_PC3")
 
