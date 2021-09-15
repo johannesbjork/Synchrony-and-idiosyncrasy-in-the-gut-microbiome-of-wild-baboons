@@ -22,6 +22,11 @@
       * *gams_all_models_PCs_div.R* Code for fitting **model P+G+H** to microbiome PC1-3 and 3 alpha diversity metrics, successively removing one predictor variable at the time, keeping the model otherwise intact
       * *gams_all_models_phylum.R* Code for fitting **model P+G+H** to the clr-transformed relative abundance of 12 phyla, successively removing one predictor variable at the time, keeping the model otherwise intact
       * *gams_all_models_family.R* Code for fitting **model P+G+H** to the clr-transformed relative abundance of 34 families, successively removing one predictor variable at the time, keeping the model otherwise intact
-   
- **All of the above GAMs use the file metadata_detrended.RDS in the OSF Data/ repository**  
+    * santiy_checks/
+      * *randomize_host_and_grp_labels.Rmd:* Code to randomize social group membership and host identity
+      * *gams_randm_grp_labels.R:* Code to run model P+G+H with randomized social group labels 
+      * *gams_randm_grp_labels.R:* Code to run model P+G+H with randomized host labels 
+      * *simulation.Rmd:* Code to run a simulation investigating the effect of model complexity on deviance explained
+ 
+**All of the above GAMs use the file metadata_detrended.RDS in the OSF Data/ repository**  
 
