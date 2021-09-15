@@ -13,13 +13,13 @@
   
   * GAMs/
     * hierarchical/
-      * *gams_vi_pcs_and_alphadiv.R:*
-      * *gams_vi_phylum.R*
-      * *gams_vi_family.R* 
+      * *gams_vi_pcs_and_alphadiv.R:* Code for fitting **model P**, **model P+G** and **model P+G+H** to microbiome PC1-3 and 3 alpha diversity metrics
+      * *gams_vi_phylum.R:* Code for fitting **model P**, **model P+G** and **model P+G+H** to the clr-transformed relative abundance of 12 phyla  
+      * *gams_vi_family.R* Code for fitting **model P**, **model P+G** and **model P+G+H** to the clr-transformed relative abundance of 34 families
     * variable_importance/ 
-      * *gams_all_models_PCs_div.R*
-      * *gams_all_models_phylum.R*
-      * *gams_all_models_family.R*  
+      * *gams_all_models_PCs_div.R* Code for fitting **model P+G+H** to microbiome PC1-3 and 3 alpha diversity metrics, successively removing one predictor variable at the time, keeping the model otherwise intact
+      * *gams_all_models_phylum.R* Code for fitting **model P+G+H** to the clr-transformed relative abundance of 12 phyla, successively removing one predictor variable at the time, keeping the model otherwise intact
+      * *gams_all_models_family.R* Code for fitting **model P+G+H** to the clr-transformed relative abundance of 34 families, successively removing one predictor variable at the time, keeping the model otherwise intact
    
  **Data**
  All analyses 
