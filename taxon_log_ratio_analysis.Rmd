@@ -24,7 +24,7 @@ The figures are Fig. 3E and fig. S14; fig. S15; and fig. S20 and S21
 # Prepare data for phylum level log-ratios
 
 # Read-in and agglomerate data
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("phylum")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -118,7 +118,7 @@ for(year_season_host in names(log_ratios_year_season_host_phy)) {
 # Prepare data for family level log-ratios
 
 # Read-in and agglomerate data
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("family")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -495,7 +495,7 @@ p_top6_fam + p_bottom6_fam
 
 # Prepare data for phylum level log-ratios
 
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("phylum")
 
 ftbl <- as(otu_table(ps),"matrix") 
@@ -533,7 +533,7 @@ for(i in 1:nrow(tmp)) {
 
 # Prepare data for family level log-ratios
 
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("family")
 
 ftbl <- as(otu_table(ps),"matrix") 
@@ -676,7 +676,7 @@ p1 + p2 + plot_layout(ncol=2, guides="collect")
 # Prepare data for phylum level log-ratios
 
 # Read-in and agglomerate data
-ps <- readRDS("ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("phylum")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -765,7 +765,7 @@ for(year_season_grp in names(log_ratios_year_season_grps_phy)) {
 # Prepare data for family level log-ratios
 
 # Read-in and agglomerate data
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("family")
 
 metadata <- as(sample_data(ps), "data.frame")
