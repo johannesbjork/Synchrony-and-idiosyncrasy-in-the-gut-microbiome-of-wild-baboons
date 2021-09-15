@@ -13,7 +13,7 @@
   * *grooming_analysis.Rmd:* Social connectedness - microbiome similarity analysis
     * *figs. S23 and S24*  
   
- **All of the above analyses apart from *grooming_analysis.Rmd:* use the file ps.RDS in the OSF Data/ repository**
+ **All of the above analyses apart from *grooming_analysis.Rmd:* use the file ps.RDS in the OSF Data/ repository**. 
  ***grooming_analysis.Rmd:* uses within_grp_groom.RDS in the OSF Data/ repository** 
   
   * GAMs/
