@@ -1,0 +1,74 @@
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(mgcv)
+library(gratia)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(patchwork)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S18
+
+# We simulated data with a strong population-level effect, but with a very similar average functional response among social groups. We simulated data from 4 hosts, each with 100 samples divided into two social groups. We fit two models mimicking model P and model P+G. 
+
+# ===============================================================================================
+#   simulate data: 4 individuals with 100 samples each, from 2 grpups
+# ===============================================================================================
+set.seed(1)
+
+n <- 100
+y <- matrix(0, 4, n)
+
+# global trend: mean of -1 in first half samples, mean +1 in second half samples
+baseline <- c(rnorm(n/2, -1), rnorm(n/2, 1))
+
+# all individuals have this baseline...
+y[1,] <- baseline
+y[2,] <- baseline
+y[3,] <- baseline
+y[4,] <- baseline
+
+# ...plus group-level noise
+y[1:2,] <- y[1:2,] + matrix(rnorm(n*4, 0, 0.5), 2, n)
+y[3:4,] <- y[3:4,] + matrix(rnorm(n*4, 0, 0.5), 2, n)
+
+# stick this in a data.frame
+idx <- 1:n
+df <- data.frame(x=rep(idx, 4), 
+                 x_coarse=rep(round(idx, -1), 4), 
+                 y=c(y[1,], y[2,], y[3,], y[4,]),
+                 group=factor(c(rep("g1", 2*n), rep("g2", 2*n))),
+                 indiv=c(rep("i1",n), rep("i2",n), rep("i3",n), rep("i4",n)))
+
+# fit a single global smooth
+m1_sim <- bam(y ~ s(x_coarse), select=F, method="ML", data=df)
+# fit global smooth + group level smooth
+m2_sim <- bam(y ~ s(x_coarse) + s(x, group, bs="fs"), select=F, method="ML", data=df)
+```
+
+```{r, fig. S18, echo=T, eval=T, message=FALSE, warning=FALSE}
+# fig. S18
+
+# Plot data 
+
+p1 <- draw(m1_sim) 
+p2 <- draw(m2_sim, select=1)
+p3 <- draw(m2_sim, select=2)
+p4 <- ggplot() + theme_void() # empty plot
+p1 + p2 + p3 + plot_spacer() + plot_spacer() + plot_spacer() + plot_layout(nrow=2)
+
+df2 <- cbind(data.frame(Model=c("m1","m2")),
+                  data.frame(Deviance=c(m1_sim$deviance,m2_sim$deviance)),
+                  data.frame(AIC=c(AIC(m1_sim),AIC(m2_sim))),
+                  data.frame(`Deviance explained`= c(
+                                        round((summary(m1_sim)$dev.expl*100),4),
+                                        round((summary(m2_sim)$dev.expl*100),4))))
+
+colnames(df2)[4] <- "Deviance explained"
+
+df2 %>% 
+  kable(digits=2, format='html', align="c", booktabs=T) %>% 
+  kable_styling(font_size=12, full_width=F, latex_options=c("striped", "hold_position"))
+```
