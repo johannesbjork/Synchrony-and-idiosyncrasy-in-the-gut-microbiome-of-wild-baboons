@@ -10,8 +10,11 @@
     * *Figs. 3A, B, C; figs. S11*   
   * *taxon_log_ratio_analysis.Rmd:* Host and social group log-ratios
     * *Fig. 3E; figs. S14, S15, S20, and S21*
+  * *grooming_analysis.Rmd:* Social connectedness - microbiome similarity analysis
+    * *figs. S23 and S24*  
   
- **All of the above analyses use the file ps.RDS in the OSF Data/ repository**  
+ **All of the above analyses apart from *grooming_analysis.Rmd:* use the file ps.RDS in the OSF Data/ repository**
+ ***grooming_analysis.Rmd:* uses within_grp_groom.RDS in the OSF Data/ repository** 
   
   * GAMs/
     * hierarchical/
