@@ -21,7 +21,7 @@ In this RMarkdown file, we reproduce all plots stemming from the Aitchison PCA a
 
 ```{r, echo=FALSE, eval=T, message=FALSE, warning=FALSE}
 # Read-in data
-ps <- readRDS("ps.RDS")
+ps <- readRDS("Data/ps.RDS")
 
 # Aitchison PCA = PCA on clr-transformed relative abundances
 pseudocount <- 0.65 # for clr-transformation
