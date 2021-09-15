@@ -1,0 +1,130 @@
+---
+title: "Randomize host and group labels"
+author: Johannes Björk
+output: html_notebook
+---
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+```
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Randomize host labels
+
+set.seed(3)
+
+#metadata <- readRDS("~/Documents/Projects/re_analyze/gams/metadata_PCs_div.RDS")
+metadata <- readRDS("../Data/metadata_detrended.RDS")
+
+# 10 permutations
+metadata$host_randm10 <- metadata$host_randm9 <- metadata$host_randm8 <- metadata$host_randm7 <- metadata$host_randm6 <- metadata$host_randm5 <- metadata$host_randm4 <- metadata$host_randm3 <- metadata$host_randm2 <- metadata$host_randm1 <- NA
+metadata$host <- as.character(metadata$host)
+
+# For each permutation, randomly sample (i.e. suffle) host labels while keeping social group, season and hydrological year intact
+# Also randomly sample (i.e. shuffle) host level predictor variables
+for(random in paste0("host_randm",1:10)) {
+  print(random)
+  for(gr in levels(metadata$grp)) {
+    print(gr)
+    for(hy in unique(metadata$hydro_year)) {
+      print(hy)
+      for(s in c("Wet","Dry")) {
+        print(s)
+        metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, random] <- sample(metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "host"]) 
+        # Shuffle age, sex and social rank too
+        metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "age"] <- sample(metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "age"])
+        metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "sex"] <- sample(metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "sex"])
+        metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "proportional_rank"] <- sample(metadata[metadata$grp==gr & metadata$hydro_year==hy & metadata$season==s, "proportional_rank"])
+      }
+    }
+  }
+}
+
+metadata <- metadata %>% 
+  mutate(host_randm1=factor(host_randm1),
+         host_randm2=factor(host_randm2),
+         host_randm3=factor(host_randm3),
+         host_randm4=factor(host_randm4),
+         host_randm5=factor(host_randm5),
+         host_randm6=factor(host_randm6),
+         host_randm7=factor(host_randm7),
+         host_randm8=factor(host_randm8),
+         host_randm9=factor(host_randm9),
+         host_randm10=factor(host_randm10))
+
+saveRDS(metadata, "metadata_shuffled_host_labels.RDS")
+```
+
+
+```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
+# Randomize social group memberships 
+
+set.seed(3)
+
+metadata <- readRDS("../Data/metadata_detrended.RDS")
+
+# 10 permutations
+metadata$grp_randm10 <- metadata$grp_randm9 <- metadata$grp_randm8 <- metadata$grp_randm7 <- metadata$grp_randm6 <- metadata$grp_randm5 <- metadata$grp_randm4 <- metadata$grp_randm3 <- metadata$grp_randm2 <- metadata$grp_randm1 <- NA
+metadata$grp <- as.character(metadata$grp)
+metadata$host <- as.character(metadata$host)
+
+# This randomizes group membership but all samples from any given host gets the same group assignment
+# We did not keep season and hydrological year intact as there is too litle variation among social groups within the same season and year
+metadata$grp_randm1 <- metadata$grp_randm2 <- metadata$grp_randm3 <- metadata$grp_randm4 <- metadata$grp_randm5 <- metadata$grp_randm6 <- metadata$grp_randm7 <- metadata$grp_randm8 <- metadata$grp_randm9 <- metadata$grp_randm10 <- NA
+
+for(k in unique(metadata$host)) {
+  print(k)
+  sample_from <- c("1.1", "1.21", "1.22", "2.1", "2.2")
+  metadata[metadata$host %in% k,]$grp_randm1 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm2 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm3 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm4 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm5 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm6 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm7 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm8 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm9 <- sample(x=sample_from, size=1, replace=T)
+  metadata[metadata$host %in% k,]$grp_randm10 <- sample(x=sample_from, size=1, replace=T)
+}
+
+metadata <- metadata %>% 
+  mutate(grp_randm1=factor(grp_randm1),
+         grp_randm2=factor(grp_randm2),
+         grp_randm3=factor(grp_randm3),
+         grp_randm4=factor(grp_randm4),
+         grp_randm5=factor(grp_randm5),
+         grp_randm6=factor(grp_randm6),
+         grp_randm7=factor(grp_randm7),
+         grp_randm8=factor(grp_randm8),
+         grp_randm9=factor(grp_randm9),
+         grp_randm10=factor(grp_randm10))
+
+# However, we did randomize (i.e. shuffle) social group-level predictors within seasons and years
+for(hy in unique(metadata$hydro_year)) {
+  print(hy)
+  for(s in c("Wet","Dry")) {
+    print(s)
+    metadata[metadata$hydro_year==hy & metadata$season==s, "group_size"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "group_size"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "area_tot_sqkm"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "area_tot_sqkm"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "frac_uniq"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "frac_uniq"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "lat"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "lat"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "lon"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "lon"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC1"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC1"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC2"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC2"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC3"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC3"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC4"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC4"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC5"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC5"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC6"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC6"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC7"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC7"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC8"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC8"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC9"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC9"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC10"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC10"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC11"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC11"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC12"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC12"])
+    metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC13"] <- sample(metadata[metadata$hydro_year==hy & metadata$season==s, "diet_PC13"])
+  }
+}
+
+saveRDS(metadata, "metadata_shuffled_grp_labels.RDS")
+```
