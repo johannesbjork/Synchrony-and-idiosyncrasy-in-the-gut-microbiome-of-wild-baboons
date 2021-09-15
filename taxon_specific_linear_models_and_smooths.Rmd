@@ -21,7 +21,7 @@ library(RColorBrewer)
 # Prepare data for ASV-level linear models
 
 # Read-in data
-ps <- readRDS("ps.RDS")
+ps <- readRDS("Data/ps.RDS")
 
 metadata <- as(sample_data(ps), "data.frame")
 ftbl <- as(otu_table(ps),"matrix") 
@@ -77,7 +77,7 @@ for(asv in asv_ids) {
 # Prepare data for phylum-level linear models
 
 # Read-in data
-ps <- readRDS("ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("phylum")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -132,7 +132,7 @@ for(phy in phylum_names) {
 # Prepare data for family-level linear models
 
 # Read-in data
-ps <- readRDS("ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("family")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -187,7 +187,7 @@ for(fam in family_names) {
 ## Prepare data for PCs and alpha diversity linear models
 
 # Read-in data
-ps <- readRDS("ps.RDS")
+ps <- readRDS("Data/ps.RDS")
 
 # Aitchison PCA = PCA on clr-transformed relative abundances
 pseudocount <- 0.65 # for clr-transformation
@@ -340,7 +340,7 @@ lm_df %>%
 # Plot ASV level linear models
 
 # Read-in data
-ps <- readRDS("ps.RDS")
+ps <- readRDS("Data/ps.RDS")
 
 ftbl <- as(otu_table(ps),"matrix") 
 tax <- data.frame(as(tax_table(ps),"matrix")) 
@@ -427,7 +427,7 @@ lm_asv_ls %>%
 # Prepare data for phylum-level smooths
 
 # Read-in data
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>%
    tax_glom("phylum")
 
 metadata <- as(sample_data(ps), "data.frame")
@@ -610,7 +610,7 @@ phylum_smooths_df %>%
 # Prepare data for family-level smooths
 
 # Read-in data
-ps <- readRDS("ps.RDS") %>% 
+ps <- readRDS("Data/ps.RDS") %>%
    tax_glom("family")
 
 metadata <- as(sample_data(ps), "data.frame")
