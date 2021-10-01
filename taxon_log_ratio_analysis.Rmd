@@ -60,6 +60,29 @@ ftbl_avg <- ceiling(ftbl_avg)
 
 pseudocount <- 0.65 # for clr-transformation
 ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+
+# Average samples (clr-transformed read counts) collected from the same host
+index2 <- as.integer(factor(paste0(metadata_avg$host)))
+ftbl_avg_clr2 <- data.frame(ftbl_avg_clr, index2)
+ftbl_avg_clr2 <- as.matrix(aggregate(.~index2, ftbl_avg_clr2, mean))
+
+metadata_avg2 <- cbind(metadata_avg,
+                       data.frame(index2=index2))
+rownames(ftbl_avg_clr2) <- as.character(metadata_avg2[!duplicated(index2),]$host)
+ftbl_avg_clr2 <- subset(ftbl_avg_clr2, select=-index2)
+
+# Average samples (clr-transformed read counts) collected from the same host in the same hydro_year and season
+index3 <- as.integer(factor(paste0(metadata_avg$host, "_", metadata_avg$hydro_year, "_", metadata_avg$season)))
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr, index3)
+ftbl_avg_clr3 <- as.matrix(aggregate(.~index3, ftbl_avg_clr3, mean))
+metadata_avg3 <- cbind(metadata_avg,
+                       data.frame(index3=index3))
+rownames(ftbl_avg_clr3) <- as.character(metadata_avg3[!duplicated(index3),]$sample_id)
+
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr3) %>% 
+  left_join(select(metadata_avg3, sample_id, index3, season, hydro_year), by="index3") %>% 
+  select(-index3)
+
 ```
 
 ```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
@@ -79,9 +102,9 @@ for(host in unique(metadata_filtered$host)) {
   focal_metadata <- metadata_avg[metadata_avg$host %in% host,][,c("sample_id","host","collection_date")]
   
   for(row in 1:nrow(features)) {
-    log_ratios_host_phy[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_host_phy[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr2[, features$feature[row]], na.rm=T)
     
-    log_ratios_host_phy[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+    log_ratios_host_phy[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr2[, features$feature[row]])
 
   }
 }
@@ -104,9 +127,9 @@ for(year_season_host in names(log_ratios_year_season_host_phy)) {
   focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_host, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_host, "\\_", simplify=T)[,2] & metadata_avg$host %in% paste(str_split(year_season_host, "\\_", simplify=T)[,3:4], collapse="_"),][,c("sample_id","host","collection_date","hydro_year","season")]
   
   for(row in 1:nrow(features)) {
-    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],], na.rm=T)
 
-    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr[,features$feature[row]])
+    log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],])
   }
 }
 ```
@@ -154,6 +177,29 @@ ftbl_avg <- ceiling(ftbl_avg)
 
 pseudocount <- 0.65 # for clr-transformation
 ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+
+# Average samples (clr-transformed read counts) collected from the same host
+index2 <- as.integer(factor(paste0(metadata_avg$host)))
+ftbl_avg_clr2 <- data.frame(ftbl_avg_clr, index2)
+ftbl_avg_clr2 <- as.matrix(aggregate(.~index2, ftbl_avg_clr2, mean))
+
+metadata_avg2 <- cbind(metadata_avg,
+                       data.frame(index2=index2))
+rownames(ftbl_avg_clr2) <- as.character(metadata_avg2[!duplicated(index2),]$host)
+ftbl_avg_clr2 <- subset(ftbl_avg_clr2, select=-index2)
+
+# Average samples (clr-transformed read counts) collected from the same host in the same hydro_year and season
+index3 <- as.integer(factor(paste0(metadata_avg$host, "_", metadata_avg$hydro_year, "_", metadata_avg$season)))
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr, index3)
+ftbl_avg_clr3 <- as.matrix(aggregate(.~index3, ftbl_avg_clr3, mean))
+metadata_avg3 <- cbind(metadata_avg,
+                       data.frame(index3=index3))
+rownames(ftbl_avg_clr3) <- as.character(metadata_avg3[!duplicated(index3),]$sample_id)
+
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr3) %>% 
+  left_join(select(metadata_avg3, sample_id, index3, season, hydro_year), by="index3") %>% 
+  select(-index3)
+
 ```
 
 ```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
@@ -173,9 +219,9 @@ for(host in unique(metadata_filtered$host)) {
   focal_metadata <- metadata_avg[metadata_avg$host %in% host,][,c("sample_id","host","collection_date")]
   
   for(row in 1:nrow(features)) {
-    log_ratios_host_fam[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
+    log_ratios_host_fam[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr2[, features$feature[row]], na.rm=T)
     
-    log_ratios_host_fam[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+    log_ratios_host_fam[[host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr2[, features$feature[row]])
   }
 }
 
@@ -196,10 +242,10 @@ log_ratios_year_season_host_fam <- lapply(log_ratios_year_season_host_fam, funct
 for(year_season_host in names(log_ratios_year_season_host_fam)) {
   focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_host, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_host, "\\_", simplify=T)[,2] & metadata_avg$host %in% paste(str_split(year_season_host, "\\_", simplify=T)[,3:4], collapse="_"),][,c("sample_id","host","collection_date","hydro_year","season")]
  
-   for(row in 1:nrow(features)) {
-    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
-    
-    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+  for(row in 1:nrow(features)) {
+    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],], na.rm=T)
+
+    log_ratios_year_season_host_fam[[year_season_host]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],])
   }
 }
 ```
@@ -239,7 +285,7 @@ combine %>%
         axis.text=element_text(size=14, color="black")) +
   scale_fill_manual(values=c("family"="#69e2c5","phylum"="#85cce5")) +
   scale_color_manual(values=c("family"="#06936e","phylum"="#128cad")) +
-  labs(x=NULL, y="Log fold change") + 
+  labs(x=NULL, y="Absolute Log fold change") + 
   scale_x_continuous(label=levels(combine$feature), breaks=1:length(unique(combine$feature)), expand=c(0.01,0)) +
   scale_y_continuous(expand=c(0.01,0))
 ```
@@ -365,7 +411,7 @@ p_top6_phy <- log_ratios_year_season_host_phy %>%
         plot.title = element_text(hjust=0.5)) +
   scale_color_manual(values=host_cols) +
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-8, 8)) + 
+  scale_y_continuous(limits=c(-6, 6)) + 
   labs(title="Top 6 phyla")
 
 p_bottom6_phy <- log_ratios_year_season_host_phy %>% 
@@ -404,7 +450,7 @@ p_bottom6_phy <- log_ratios_year_season_host_phy %>%
         plot.title = element_text(hjust=0.5)) +
   scale_color_manual(values=host_cols) +
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-8, 8)) + 
+  scale_y_continuous(limits=c(-6, 6)) + 
   labs(title="Bottom 6 phyla")
 
 p_top6_phy + p_bottom6_phy
@@ -495,7 +541,7 @@ p_top6_fam + p_bottom6_fam
 
 # Prepare data for phylum level log-ratios
 
-ps <- readRDS("Data/ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("phylum")
 
 ftbl <- as(otu_table(ps),"matrix") 
@@ -533,7 +579,7 @@ for(i in 1:nrow(tmp)) {
 
 # Prepare data for family level log-ratios
 
-ps <- readRDS("Data/ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("family")
 
 ftbl <- as(otu_table(ps),"matrix") 
@@ -569,11 +615,13 @@ for(i in 1:nrow(tmp)) {
 ```{r, fig. S15, echo=T, eval=T, message=FALSE, warning=FALSE}
 # fig. S15
 
-avg_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
-std_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
-
-avg_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
-std_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
+# avg_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
+# std_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
+# cv_phy <- std_phy/avg_phy
+# 
+# avg_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
+# std_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
+# cv_fam <- std_fam/avg_fam
 
 p1 <- bind_rows(
     (reshape2::melt(data.frame(ftbl_avg_phy_clr)) %>% 
@@ -679,6 +727,15 @@ p1 + p2 + plot_layout(ncol=2, guides="collect")
 ps <- readRDS("Data/ps.RDS") %>%
   tax_glom("phylum")
 
+# Filter to the 5 original groups
+metadata <- as(sample_data(ps), "data.frame") %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+
+ps <- prune_samples(metadata$sample_id, ps)
+
 metadata <- as(sample_data(ps), "data.frame")
 ftbl <- as(otu_table(ps),"matrix") 
 tax <- data.frame(as(tax_table(ps),"matrix")) 
@@ -698,12 +755,27 @@ ftbl_avg <- ceiling(ftbl_avg)
 pseudocount <- 0.65 # for clr-transformation
 ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
 
-# Filter to the 5 original groups
-metadata_filtered <- metadata_avg %>% 
-  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
-  mutate(grp=factor(grp), 
-         host=factor(host),
-         time=as.integer(factor(collection_date)))
+# Average samples (clr-transformed read counts) collected from the same host and grp
+index2 <- as.integer(factor(paste0(metadata_avg$host)))
+ftbl_avg_clr2 <- data.frame(ftbl_avg_clr, index2)
+ftbl_avg_clr2 <- as.matrix(aggregate(.~index2, ftbl_avg_clr2, mean))
+
+metadata_avg2 <- cbind(metadata_avg,
+                       data.frame(index2=index2))
+rownames(ftbl_avg_clr2) <- as.character(metadata_avg2[!duplicated(index2),]$host)
+ftbl_avg_clr2 <- subset(ftbl_avg_clr2, select=-index2)
+
+# Average samples (clr-transformed read counts) collected from the same host in the same hydro_year and season
+index3 <- as.integer(factor(paste0(metadata_avg$host, "_", metadata_avg$hydro_year, "_", metadata_avg$season)))
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr, index3)
+ftbl_avg_clr3 <- as.matrix(aggregate(.~index3, ftbl_avg_clr3, mean))
+metadata_avg3 <- cbind(metadata_avg,
+                       data.frame(index3=index3))
+rownames(ftbl_avg_clr3) <- as.character(metadata_avg3[!duplicated(index3),]$sample_id)
+
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr3) %>% 
+  left_join(select(metadata_avg3, sample_id, index3, season, hydro_year), by="index3") %>% 
+  select(-index3)
 ```
 
 ```{r}
@@ -722,20 +794,20 @@ std <- function(x) sd(x)/sqrt(length(x))
 for(grp in c("1.1","1.21","1.22","2.1","2.2")) {
   
   # print(grp)
-  focal_metadata <- metadata_filtered[metadata_filtered$grp %in% grp,][,c("sample_id","grp","collection_date")]
+  focal_metadata <- metadata_avg[metadata_avg$grp %in% grp,][,c("sample_id","grp","collection_date")]
   
   for(row in 1:nrow(features)) {
     
-    log_ratios_grps_phy[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
-    log_ratios_grps_phy[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+    log_ratios_grps_phy[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr2[, features$feature[row]], na.rm=T)
+    log_ratios_grps_phy[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr2[, features$feature[row]])
   }
 }
 
 
 # Taxon log-ratios for each season and hydrological year (fig. S21)
 
-year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
-                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- sort(c(paste0(unique(metadata_avg$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_avg$hydro_year),"_", "bDry")))
 year_season <- year_season[-1]
 year_season <- gsub(year_season, pattern="a", replacement="")
 year_season <- gsub(year_season, pattern="b", replacement="")
@@ -749,12 +821,12 @@ log_ratios_year_season_grps_phy <- lapply(log_ratios_year_season_grps_phy, funct
 for(year_season_grp in names(log_ratios_year_season_grps_phy)) {
   # print(year_season_grp)
   
-  focal_metadata <- metadata_filtered[metadata_filtered$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_filtered$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_filtered$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
+  focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_avg$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
   
-  for(row in 1:nrow(features)) {
-                                                                  
-    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
-    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+ for(row in 1:nrow(features)) {
+    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],], na.rm=T)
+
+    log_ratios_year_season_grps_phy[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],])
   }
 }
 ```
@@ -765,8 +837,17 @@ for(year_season_grp in names(log_ratios_year_season_grps_phy)) {
 # Prepare data for family level log-ratios
 
 # Read-in and agglomerate data
-ps <- readRDS("Data/ps.RDS") %>%
+ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("family")
+
+# Filter to the 5 original groups
+metadata <- as(sample_data(ps), "data.frame") %>% 
+  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
+  mutate(grp=factor(grp), 
+         host=factor(host),
+         time=as.integer(factor(collection_date)))
+
+ps <- prune_samples(metadata$sample_id, ps)
 
 metadata <- as(sample_data(ps), "data.frame")
 ftbl <- as(otu_table(ps),"matrix") 
@@ -784,15 +865,30 @@ ftbl_avg <- subset(ftbl_avg, select=-index)
 ftbl_avg <- ftbl_avg[,colSums(ftbl_avg)>0]
 ftbl_avg <- ceiling(ftbl_avg)
 
-# Filter to the 5 original groups
-metadata_filtered <- metadata_avg %>% 
-  filter(grp %in% c("1.1","1.21","1.22","2.1","2.2"), collection_date <= "2011-08-27") %>%
-  mutate(grp=factor(grp), 
-         host=factor(host),
-         time=as.integer(factor(collection_date)))
-
 pseudocount <- 0.65 # for clr-transformation
 ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
+
+# Average samples (clr-transformed read counts) collected from the same host and grp
+index2 <- as.integer(factor(paste0(metadata_avg$host)))
+ftbl_avg_clr2 <- data.frame(ftbl_avg_clr, index2)
+ftbl_avg_clr2 <- as.matrix(aggregate(.~index2, ftbl_avg_clr2, mean))
+
+metadata_avg2 <- cbind(metadata_avg,
+                       data.frame(index2=index2))
+rownames(ftbl_avg_clr2) <- as.character(metadata_avg2[!duplicated(index2),]$host)
+ftbl_avg_clr2 <- subset(ftbl_avg_clr2, select=-index2)
+
+# Average samples (clr-transformed read counts) collected from the same host in the same hydro_year and season
+index3 <- as.integer(factor(paste0(metadata_avg$host, "_", metadata_avg$hydro_year, "_", metadata_avg$season)))
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr, index3)
+ftbl_avg_clr3 <- as.matrix(aggregate(.~index3, ftbl_avg_clr3, mean))
+metadata_avg3 <- cbind(metadata_avg,
+                       data.frame(index3=index3))
+rownames(ftbl_avg_clr3) <- as.character(metadata_avg3[!duplicated(index3),]$sample_id)
+
+ftbl_avg_clr3 <- data.frame(ftbl_avg_clr3) %>% 
+  left_join(select(metadata_avg3, sample_id, index3, season, hydro_year), by="index3") %>% 
+  select(-index3)
 ```
 
 ```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
@@ -811,20 +907,20 @@ std <- function(x) sd(x)/sqrt(length(x))
 for(grp in c("1.1","1.21","1.22","2.1","2.2")) {
   
   # print(grp)
-  focal_metadata <- metadata_filtered[metadata_filtered$grp %in% grp,][,c("sample_id","grp","collection_date")]
+  focal_metadata <- metadata_avg[metadata_avg$grp %in% grp,][,c("sample_id","grp","collection_date")]
   
   for(row in 1:nrow(features)) {
     
-    log_ratios_grps_fam[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
-    log_ratios_grps_fam[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+    log_ratios_grps_fam[[grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr2[, features$feature[row]], na.rm=T)
+    log_ratios_grps_fam[[grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr2[, features$feature[row]])
   }
 }
 
 
 # Taxon log-ratios for each season and hydrological year (fig. S21)
 
-year_season <- sort(c(paste0(unique(metadata_filtered$hydro_year),"_", "aWet"),
-                      paste0(unique(metadata_filtered$hydro_year),"_", "bDry")))
+year_season <- sort(c(paste0(unique(metadata_avg$hydro_year),"_", "aWet"),
+                      paste0(unique(metadata_avg$hydro_year),"_", "bDry")))
 year_season <- year_season[-1]
 year_season <- gsub(year_season, pattern="a", replacement="")
 year_season <- gsub(year_season, pattern="b", replacement="")
@@ -838,12 +934,12 @@ log_ratios_year_season_grps_fam <- lapply(log_ratios_year_season_grps_fam, funct
 for(year_season_grp in names(log_ratios_year_season_grps_fam)) {
   
   # print(year_season_grp)
-  focal_metadata <- metadata_filtered[metadata_filtered$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_filtered$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_filtered$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
+  focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_grp, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_grp, "\\_", simplify=T)[,2] & metadata_avg$grp %in% str_split(year_season_grp, "\\_", simplify=T)[,3],][,c("sample_id","grp","collection_date","hydro_year","season")]
   
-  for(row in 1:nrow(features)) {
-                                                                  
-    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr[, features$feature[row]], na.rm=T)
-    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]]) - std(ftbl_avg_clr[, features$feature[row]])
+ for(row in 1:nrow(features)) {
+    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],], na.rm=T)
+
+    log_ratios_year_season_grps_fam[[year_season_grp]][row,]$log_ratio_std <- std(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]])-std(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],])
   }
 }
 ```
@@ -897,8 +993,8 @@ bind_rows(
 # Plot fig. S21
 
 # Taxon log-ratios for each season and hydrological year
-metadata_filtered$hydro_year_season <- paste0(metadata_filtered$hydro_year,"_",metadata_filtered$season)
-metadata_filtered$idx <- as.integer(factor(metadata_filtered$hydro_year_season,levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")))
+metadata_avg$hydro_year_season <- paste0(metadata_avg$hydro_year,"_",metadata_avg$season)
+metadata_avg$idx <- as.integer(factor(metadata_avg$hydro_year_season,levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet","2010_Dry")))
 rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(2002:2010, each=2)),
                                data.frame(season=c("Wet","Dry"), stringsAsFactors=F),
                                data.frame(xmin=NA),
@@ -908,8 +1004,8 @@ rect_idx_season_pad <- cbind(  data.frame(hydro_year=rep(2002:2010, each=2)),
 rect_idx_season_pad <- rect_idx_season_pad[-nrow(rect_idx_season_pad),]
 
 for(n in 1:nrow(rect_idx_season_pad)) {
-  rect_idx_season_pad$xmin[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx)
-  rect_idx_season_pad$xmax[n] <- unique(metadata_filtered[metadata_filtered$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_filtered$season %in% rect_idx_season_pad$season[n],]$idx+1)
+  rect_idx_season_pad$xmin[n] <- unique(metadata_avg[metadata_avg$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_avg$season %in% rect_idx_season_pad$season[n],]$idx)
+  rect_idx_season_pad$xmax[n] <- unique(metadata_avg[metadata_avg$hydro_year %in% rect_idx_season_pad$hydro_year[n] & metadata_avg$season %in% rect_idx_season_pad$season[n],]$idx+1)
 }
 
 rect_idx_season_pad <- cbind(data.frame(hydro_year=rect_idx_season_pad$hydro_year),
@@ -1007,7 +1103,7 @@ p_top6_phy <- log_ratios_year_season_grps_phy %>%
   scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
                      labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-2, 2)) + 
+  scale_y_continuous(limits=c(-1, 1), breaks=seq(-1,1,by=0.5)) + 
   labs(title="Top 6 phyla")
 
 p_bottom6_phy <- log_ratios_year_season_grps_phy %>% 
@@ -1047,7 +1143,7 @@ p_bottom6_phy <- log_ratios_year_season_grps_phy %>%
   scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
                      labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +  
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-2, 2)) + 
+  scale_y_continuous(limits=c(-1, 1), breaks=seq(-1,1,by=0.5)) + 
   labs(title="Bottom 6 phyla")
 
 p_top6_fam <- log_ratios_year_season_grps_fam %>% 
@@ -1087,7 +1183,7 @@ p_top6_fam <- log_ratios_year_season_grps_fam %>%
   scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
                      labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-2, 2)) + 
+  scale_y_continuous(limits=c(-1, 1), breaks=seq(-1,1,by=0.5)) + 
   labs(title="Top 6 families")
 
 p_bottom6_fam <- log_ratios_year_season_grps_fam %>% 
@@ -1126,7 +1222,7 @@ p_bottom6_fam <- log_ratios_year_season_grps_fam %>%
   scale_color_manual(values=c("1.1"="#e41a1c","1.21"="#f28106","1.22"="#4745af","2.1"="#e541c6","2.2"="#31725b"),
                      labels=c("Nyayo's", "Omo's", "Viola's", "Linda's", "Weaver's")) +
   labs(y="Log fold change", x="Hydrological year") +
-  scale_y_continuous(limits=c(-2, 2)) + 
+  scale_y_continuous(limits=c(-1, 1), breaks=seq(-1,1,by=0.5)) + 
   labs(title="Bottom 6 families")
 
 p_top6_phy + p_bottom6_phy + plot_layout(ncol=2, guides="collect")
