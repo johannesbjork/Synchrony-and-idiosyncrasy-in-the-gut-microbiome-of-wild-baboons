@@ -286,7 +286,7 @@ pick_two_of_these_cols <- names(table(gsub("[[:digit:]]","",colors))[table(gsub(
 
 picks <- vector("list", length(pick_two_of_these_cols))
 for(i in 1:length(pick_two_of_these_cols)) {
-  picks[[i]] <- c(paste0(pick_two_of_these_cols[i],"1"),paste0(pick_two_of_these_cols[i],"5"))
+  picks[[i]] <- c(pick_two_of_these_cols[i],paste0(pick_two_of_these_cols[i],"4"))
 }
 
 colors <- c(Reduce(c,picks), names(table(gsub("[[:digit:]]","",colors))[table(gsub("[[:digit:]]","",colors))==1]))
