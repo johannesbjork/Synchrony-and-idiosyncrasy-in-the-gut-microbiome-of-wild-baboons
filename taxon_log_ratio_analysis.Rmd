@@ -27,13 +27,8 @@ The figures are Fig. 3E and fig. S14; fig. S15; and fig. S20 and S21
 ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("phylum")
 
-metadata <- as(sample_data(ps), "data.frame")
-ftbl <- as(otu_table(ps),"matrix") 
-tax <- data.frame(as(tax_table(ps),"matrix")) 
-colnames(ftbl) <- tax$phylum
-
 # Filter metadata to the best-sampled animals
-# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2)
+# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 for the GAMs as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2)
 metadata_filtered <- as(sample_data(ps), "data.frame") %>%
     select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
     group_by(host) %>% 
@@ -45,6 +40,14 @@ metadata_filtered <- as(sample_data(ps), "data.frame") %>%
     filter(n_samples >= 75,
            collection_date >= "2002-01-01",
            collection_date < "2010-01-01")
+
+# filter the phyloseq object to contain the same date range
+ps <- prune_samples((as(sample_data(ps), "data.frame") %>% filter(collection_date >= "2002-01-01",collection_date < "2010-01-01") %>% select(sample_id) %>% pull()), ps)
+
+metadata <- as(sample_data(ps),"data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$phylum
 
 # Average samples (read counts) collected from the same host in the same group sampled the same date
 index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
@@ -62,6 +65,7 @@ pseudocount <- 0.65 # for clr-transformation
 ftbl_avg_clr <- compositions::clr(ftbl_avg+pseudocount)
 
 # Average samples (clr-transformed read counts) collected from the same host
+# This feature table contains the mean clr-transformed relative abundances of each after taking averages for each host (so that well-sampled hosts don’t have greater weight)
 index2 <- as.integer(factor(paste0(metadata_avg$host)))
 ftbl_avg_clr2 <- data.frame(ftbl_avg_clr, index2)
 ftbl_avg_clr2 <- as.matrix(aggregate(.~index2, ftbl_avg_clr2, mean))
@@ -72,6 +76,7 @@ rownames(ftbl_avg_clr2) <- as.character(metadata_avg2[!duplicated(index2),]$host
 ftbl_avg_clr2 <- subset(ftbl_avg_clr2, select=-index2)
 
 # Average samples (clr-transformed read counts) collected from the same host in the same hydro_year and season
+# This is the same as ftbl_avg_clr2 but for each hydrological year and season separately
 index3 <- as.integer(factor(paste0(metadata_avg$host, "_", metadata_avg$hydro_year, "_", metadata_avg$season)))
 ftbl_avg_clr3 <- data.frame(ftbl_avg_clr, index3)
 ftbl_avg_clr3 <- as.matrix(aggregate(.~index3, ftbl_avg_clr3, mean))
@@ -101,6 +106,7 @@ for(host in unique(metadata_filtered$host)) {
   
   focal_metadata <- metadata_avg[metadata_avg$host %in% host,][,c("sample_id","host","collection_date")]
   
+  # here we subtract each focal taxon’s average clr-transformed relative abundances across all samples belonging to a given host from its averaged clr-transformed relative abundance across the host population
   for(row in 1:nrow(features)) {
     log_ratios_host_phy[[host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]], na.rm=T) - mean(ftbl_avg_clr2[, features$feature[row]], na.rm=T)
     
@@ -126,6 +132,7 @@ log_ratios_year_season_host_phy <- lapply(log_ratios_year_season_host_phy, funct
 for(year_season_host in names(log_ratios_year_season_host_phy)) {
   focal_metadata <- metadata_avg[metadata_avg$hydro_year %in% str_split(year_season_host, "\\_", simplify=T)[,1] & metadata_avg$season %in% str_split(year_season_host, "\\_", simplify=T)[,2] & metadata_avg$host %in% paste(str_split(year_season_host, "\\_", simplify=T)[,3:4], collapse="_"),][,c("sample_id","host","collection_date","hydro_year","season")]
   
+  # here we subtract each focal taxon’s average clr-transformed relative abundances across all samples belonging to a given host-year-season combination from its averaged clr-transformed relative abundance across the host population (in the same hydrological year and season)
   for(row in 1:nrow(features)) {
     log_ratios_year_season_host_phy[[year_season_host]][row,]$log_ratio <- mean(ftbl_avg_clr[focal_metadata$sample_id, features$feature[row]],na.rm=T) - mean(ftbl_avg_clr3[ftbl_avg_clr3$hydro_year==unique(focal_metadata$hydro_year) & ftbl_avg_clr3$season==unique(focal_metadata$season), features$feature[row],], na.rm=T)
 
@@ -144,13 +151,6 @@ for(year_season_host in names(log_ratios_year_season_host_phy)) {
 ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("family")
 
-metadata <- as(sample_data(ps), "data.frame")
-ftbl <- as(otu_table(ps),"matrix") 
-tax <- data.frame(as(tax_table(ps),"matrix")) 
-colnames(ftbl) <- tax$family
-
-# Filter metadata to the best-sampled animals
-# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2) 
 metadata_filtered <- as(sample_data(ps), "data.frame") %>%
     select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
     group_by(host) %>% 
@@ -162,6 +162,14 @@ metadata_filtered <- as(sample_data(ps), "data.frame") %>%
     filter(n_samples >= 75,
            collection_date >= "2002-01-01",
            collection_date < "2010-01-01")
+
+# filter the phyloseq object to contain the same date range
+ps <- prune_samples((as(sample_data(ps), "data.frame") %>% filter(collection_date >= "2002-01-01",collection_date < "2010-01-01") %>% select(sample_id) %>% pull()), ps)
+
+metadata <- as(sample_data(ps),"data.frame")
+ftbl <- as(otu_table(ps),"matrix") 
+tax <- data.frame(as(tax_table(ps),"matrix")) 
+colnames(ftbl) <- tax$family
 
 # Average samples (read counts) collected from the same host in the same group sampled the same date
 index <- as.integer(factor(paste0(metadata$host, "_", metadata$grp, "_", metadata$collection_date)))
@@ -384,7 +392,6 @@ p_top6_phy <- log_ratios_year_season_host_phy %>%
          hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
          idx=as.integer(hydro_year_season)-1,
          host=factor(host)) %>% 
-  filter(hydro_year %in% 2002:2010) %>% 
   filter(feature %in% top_6_phy) %>%
   mutate(feature=factor(feature, levels=top_6_phy)) %>% 
   ggplot(aes(x=idx, y=log_ratio, color=host)) +
@@ -423,7 +430,6 @@ p_bottom6_phy <- log_ratios_year_season_host_phy %>%
          hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
          idx=as.integer(hydro_year_season)-1,
          host=factor(host)) %>% 
-  filter(hydro_year %in% 2002:2010) %>% 
   filter(feature %in% bottom_6_phy) %>%
   mutate(feature=factor(feature, levels=bottom_6_phy)) %>% 
   ggplot(aes(x=idx, y=log_ratio, color=host)) +
@@ -453,8 +459,6 @@ p_bottom6_phy <- log_ratios_year_season_host_phy %>%
   scale_y_continuous(limits=c(-6, 6)) + 
   labs(title="Bottom 6 phyla")
 
-p_top6_phy + p_bottom6_phy
-
 p_top6_fam <- log_ratios_year_season_host_fam %>% 
   bind_rows(.id="id") %>% 
   separate(id, sep=c("\\_"), into=c("hydro_year","Season","host","id")) %>% 
@@ -464,7 +468,6 @@ p_top6_fam <- log_ratios_year_season_host_fam %>%
          hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
          idx=as.integer(hydro_year_season)-1,
          host=factor(host)) %>% 
-  filter(hydro_year %in% 2002:2010) %>% 
   filter(feature %in% top_6_fam) %>%
   mutate(feature=factor(feature, levels=top_6_fam)) %>% 
   ggplot(aes(x=idx, y=log_ratio, color=host)) +
@@ -503,7 +506,6 @@ p_bottom6_fam <- log_ratios_year_season_host_fam %>%
          hydro_year_season=factor(paste0(hydro_year,"_",season), levels=c("2002_Wet","2002_Dry","2003_Wet","2003_Dry","2004_Wet","2004_Dry","2005_Wet","2005_Dry","2006_Wet","2006_Dry","2007_Wet","2007_Dry","2008_Wet","2008_Dry","2009_Wet","2009_Dry","2010_Wet")),
          idx=as.integer(hydro_year_season)-1,
          host=factor(host)) %>% 
-  filter(hydro_year %in% 2002:2010) %>% 
   filter(feature %in% bottom_6_fam) %>%
   mutate(feature=factor(feature, levels=bottom_6_fam)) %>% 
   ggplot(aes(x=idx, y=log_ratio, color=host)) +
@@ -533,7 +535,8 @@ p_bottom6_fam <- log_ratios_year_season_host_fam %>%
   scale_y_continuous(limits=c(-6, 6)) + 
   labs(title="Bottom 6 families")
 
-p_top6_fam + p_bottom6_fam
+# combine to one plot
+(p_top6_phy + p_bottom6_phy + plot_layout(ncol=2)) / (p_top6_fam + p_bottom6_fam + plot_layout(ncol=2))
 ```
 
 ```{r, echo=T, eval=T, message=FALSE, warning=FALSE}
@@ -544,10 +547,25 @@ p_top6_fam + p_bottom6_fam
 ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("phylum")
 
+metadata_filtered <- as(sample_data(ps), "data.frame") %>%
+    select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
+    group_by(host) %>% 
+    mutate(host=as.character(host),
+           grp=as.character(grp),
+           n_samples=n()) %>% 
+    ungroup() %>% 
+    arrange(desc(n_samples)) %>% 
+    filter(n_samples >= 75,
+           collection_date >= "2002-01-01",
+           collection_date < "2010-01-01")
+
+# filter the phyloseq object to contain the same date range
+ps <- prune_samples((as(sample_data(ps), "data.frame") %>% filter(collection_date >= "2002-01-01",collection_date < "2010-01-01") %>% select(sample_id) %>% pull()), ps)
+
+metadata <- as(sample_data(ps),"data.frame")
 ftbl <- as(otu_table(ps),"matrix") 
 tax <- data.frame(as(tax_table(ps),"matrix")) 
 colnames(ftbl) <- tax$phylum
-metadata <- as(sample_data(ps),"data.frame")
 
 # Average all samples belonging to the same host
 index <- as.integer(factor(metadata$host))
@@ -582,10 +600,27 @@ for(i in 1:nrow(tmp)) {
 ps <- readRDS("Data/ps.RDS") %>% 
   tax_glom("family")
 
+# Filter metadata to the best-sampled animals
+# We initially filtered to the best-sampled 75 host animals, but decided to re-strict the data to 2002-2010 for the GAMs as this is the time period that is most densely sampled. This resulted in 56 host animals (Fig. S2)
+metadata_filtered <- as(sample_data(ps), "data.frame") %>%
+    select(sample_id, host, grp, collection_date, month, hydro_year, season) %>% 
+    group_by(host) %>% 
+    mutate(host=as.character(host),
+           grp=as.character(grp),
+           n_samples=n()) %>% 
+    ungroup() %>% 
+    arrange(desc(n_samples)) %>% 
+    filter(n_samples >= 75,
+           collection_date >= "2002-01-01",
+           collection_date < "2010-01-01")
+
+# filter the phyloseq object to contain the same date range
+ps <- prune_samples((as(sample_data(ps), "data.frame") %>% filter(collection_date >= "2002-01-01",collection_date < "2010-01-01") %>% select(sample_id) %>% pull()), ps)
+
+metadata <- as(sample_data(ps),"data.frame")
 ftbl <- as(otu_table(ps),"matrix") 
 tax <- data.frame(as(tax_table(ps),"matrix")) 
 colnames(ftbl) <- tax$family
-metadata <- as(sample_data(ps),"data.frame")
 
 # Average all samples belonging to the same host
 index <- as.integer(factor(metadata$host))
@@ -614,15 +649,6 @@ for(i in 1:nrow(tmp)) {
 
 ```{r, fig. S15, echo=T, eval=T, message=FALSE, warning=FALSE}
 # fig. S15
-
-# avg_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
-# std_phy = data.frame(ftbl_avg_phy_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
-# cv_phy <- std_phy/avg_phy
-# 
-# avg_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, mean, na.rm=TRUE)
-# std_fam = data.frame(ftbl_avg_fam_clr) %>% summarise_if(is.numeric, sd, na.rm=TRUE)
-# cv_fam <- std_fam/avg_fam
-
 p1 <- bind_rows(
     (reshape2::melt(data.frame(ftbl_avg_phy_clr)) %>% 
          na.omit() %>%
@@ -630,6 +656,7 @@ p1 <- bind_rows(
          group_by(variable) %>% 
          mutate(taxon_level="Phylum",
                 std=sd(value),
+                variance=var(value),
                 avg=median(value)) %>% 
          ungroup() %>% 
          arrange(desc(avg), variable) %>% 
@@ -640,6 +667,7 @@ p1 <- bind_rows(
          group_by(variable) %>% 
          mutate(taxon_level="Family",
                 std=sd(value),
+                variance=var(value),
                 avg=median(value)) %>% 
          ungroup() %>% 
          arrange(desc(avg), variable) %>% 
@@ -670,6 +698,7 @@ combine_df <- bind_rows(
          group_by(variable) %>% 
          mutate(taxon_level="Phylum",
                 std=sd(value),
+                variance=var(value),
                 avg_median=median(value),
                 avg=mean(value),
                 cv=std/avg) %>% 
@@ -682,25 +711,26 @@ combine_df <- bind_rows(
          group_by(variable) %>% 
          mutate(taxon_level="Family",
                 std=sd(value),
+                variance=var(value),
                 avg_median=median(value),
                 avg=mean(value),
                 cv=std/avg) %>% 
          ungroup() %>% 
          arrange(desc(avg), variable) %>% 
          mutate(variable=factor(variable, rev(unique(variable)))))) %>% 
-    rename("Taxon"=1, "Log fold change"=2, "Taxon level"=3, "std"=4, "avg_median"=5, "avg"=6, "cv"=7) %>% 
+    rename("Taxon"=1, "Log fold change"=2, "Taxon level"=3, "std"=4, "variance"=5,"avg_median"=6, "avg"=7, "cv"=8) %>% 
     distinct(Taxon, .keep_all=T)  
   
-m <- nlme::gls(std~avg, data=combine_df, correlation=nlme::corARMA(p=1))
-pred <- data.frame(std_pred = predict(m, combine_df), avg=combine_df$avg)
+m <- nlme::gls(variance~avg, data=combine_df, correlation=nlme::corARMA(p=1))
+pred <- data.frame(var_pred = predict(m, combine_df), avg=combine_df$avg)
 
 p2 <- 
   combine_df %>% 
-  ggplot(aes(x=avg, y=std, color=`Taxon level`)) +
+  ggplot(aes(x=avg, y=variance, color=`Taxon level`)) +
   geom_point(size=3) +
   scale_color_manual(values=c("Phylum"="#85cce5","Family"="#69e2c5")) +
-  geom_line(size=1, color="black", data=pred, aes(x=avg, y=std_pred)) +
-  annotate("text", label=paste0("R^2 = ",round(R2(m)["R2_pred"][[1]],2),"; P = ", round(anova(m)[2,3],4)), x=-3, y=1.4, size=4.5) +
+  geom_line(size=1, color="black", data=pred, aes(x=avg, y=var_pred)) +
+  annotate("text", label=paste0("R^2 = ",round(R2(m)["R2_pred"][[1]],2),"; P = ", round(anova(m)[2,3],4)), x=-2.5, y=2.1, size=4.5) +
   theme(legend.position="none",
         panel.grid.major=element_blank(),
         panel.grid.minor=element_blank(),
@@ -713,7 +743,7 @@ p2 <-
         axis.text=element_text(size=12, color="black"),
         axis.title=element_text(size=14, color="black"),
         plot.title = element_text(hjust=0.5)) +
-  labs(x="Mean", y="Standard deviation")
+  labs(x="Mean", y="Variance")
 
 p1 + p2 + plot_layout(ncol=2, guides="collect")
 ```
